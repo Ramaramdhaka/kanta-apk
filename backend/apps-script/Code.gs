@@ -142,7 +142,7 @@ function sha256_(text) {
 
 function databaseUrl_() {
   const value = PropertiesService.getScriptProperties().getProperty('FIREBASE_DB_URL') || '';
-  if (!/^https:\/\/[a-z0-9-]+\.firebasedatabase\.app\/?$/i.test(value)) {
+  if (!/^https:\/\/[a-z0-9-]+\.[a-z0-9-]+\.firebasedatabase\.app\/?$/i.test(value)) {
     throw new Error('Invalid FIREBASE_DB_URL');
   }
   return value.replace(/\/$/, '');
