@@ -36,13 +36,14 @@ function doPost(e) {
       return json_({valid:false,message:'Invalid License Key!',badAttempt:true});
     }
     const limiter = rateLimit_(key, deviceId);
-    if (limiter) return json_({valid:false,message:limiter,badAttempt:true});
+    if (limiter) return json_({valid:false,message:limiter,badAttempt:false});
     const result = verifyKey_(key, deviceId);
+    if (!result.valid && result.badAttempt) recordFailure_(key, deviceId);
     return json_(result);
   } catch (err) {
     // Never log private keys, credentials, full request URLs, or device IDs.
     console.error('License service error: ' + (err && err.name || 'ServerError'));
-    return json_({valid:false,message:'License server temporarily unavailable. Try again later.'});
+    return json_({valid:false,message:'License server temporarily unavailable. Try again later.',retryable:true});
   }
 }
 
@@ -57,7 +58,7 @@ function verifyKey_(key, deviceId) {
       muteHttpExceptions:true
     });
     const code = fetched.getResponseCode();
-    if (code !== 200) return {valid:false,message:'Database verification temporarily unavailable.'};
+    if (code !== 200) return {valid:false,message:'Database verification temporarily unavailable.',retryable:true};
     const raw = fetched.getContentText();
     if (!raw || raw === 'null') return {valid:false,message:'Invalid License Key!',badAttempt:true};
     let record;
@@ -90,7 +91,7 @@ function verifyKey_(key, deviceId) {
     if (updated !== null) {
       const headers = fetched.getAllHeaders();
       const etag = headers.ETag || headers.Etag || headers.etag;
-      if (!etag) return {valid:false,message:'License transaction ETag missing.'};
+      if (!etag) return {valid:false,message:'License transaction ETag missing.',retryable:true};
       const put = UrlFetchApp.fetch(url, {
         method:'put',
         contentType:'application/json',
@@ -100,12 +101,12 @@ function verifyKey_(key, deviceId) {
       });
       if (put.getResponseCode() === 412) continue;
       if (put.getResponseCode() !== 200) {
-        return {valid:false,message:'Unable to activate license right now.'};
+        return {valid:false,message:'Unable to activate license right now.',retryable:true};
       }
     }
     return {valid:true,message:'License verified successfully.',type:record.type,expiry:record.expiry};
   }
-  return {valid:false,message:'License is busy. Please retry.'};
+  return {valid:false,message:'License is busy. Please retry.',retryable:true};
 }
 
 function denied_(message) { return {valid:false,message:message,badAttempt:true}; }
@@ -114,24 +115,27 @@ function json_(value) {
 }
 
 function rateLimit_(key, deviceId) {
-  // Basic device/key throttling. Not IP-grade abuse protection; Apps Script has no
-  // trustworthy anonymous client IP and callers can spoof deviceId.
+  const cache = CacheService.getScriptCache();
+  const deviceSlot = 'dev_' + sha256_(deviceId).slice(0,48);
+  const keySlot = 'key_' + sha256_(key).slice(0,48);
+  if (Number(cache.get(deviceSlot) || 0) >= MAX_ATTEMPTS_PER_DEVICE ||
+      Number(cache.get(keySlot) || 0) >= MAX_ATTEMPTS_PER_KEY) {
+    return 'Too many wrong attempts! Try again after 10 minutes.';
+  }
+  return null;
+}
+
+function recordFailure_(key, deviceId) {
   const cache = CacheService.getScriptCache();
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(4000)) return 'License service is busy. Please try again.';
+  if (!lock.tryLock(4000)) return;
   try {
     const deviceSlot = 'dev_' + sha256_(deviceId).slice(0,48);
     const keySlot = 'key_' + sha256_(key).slice(0,48);
     const deviceCount = Number(cache.get(deviceSlot) || 0);
     const keyCount = Number(cache.get(keySlot) || 0);
-    if (deviceCount >= MAX_ATTEMPTS_PER_DEVICE || keyCount >= MAX_ATTEMPTS_PER_KEY) {
-      return 'Too many wrong attempts! Try again after 10 minutes.';
-    }
-    // Count requests, not only failures: unauthenticated clients may otherwise
-    // brute-force keys. Reset automatically when the cache entry expires.
     cache.put(deviceSlot, String(deviceCount + 1), RATE_WINDOW_SECONDS);
     cache.put(keySlot, String(keyCount + 1), RATE_WINDOW_SECONDS);
-    return null;
   } finally { lock.releaseLock(); }
 }
 
