@@ -13,8 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      JG_LICENSE_API_URL: ${{ vars.JG_LICENSE_API_URL }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -148,8 +146,8 @@ jobs:
           fi
           gradle --no-daemon --stacktrace :app:assembleRelease
 
-      - name: Upload signed release APK when backend and signing configured
-        if: steps.signing.outputs.ready == 'true' && env.JG_LICENSE_API_URL != ''
+      - name: Upload signed release APK when signing configured
+        if: steps.signing.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: JG-Kanta-signed-release-APK

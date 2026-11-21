@@ -6,19 +6,13 @@ android {
     namespace 'com.example.bluetoothkanta'
     compileSdk 35
 
-    def licenseApiUrl = System.getenv('JG_LICENSE_API_URL') ?: ''
-    if (!licenseApiUrl.startsWith('https://script.google.com/macros/s/') ||
-            !licenseApiUrl.endsWith('/exec') || licenseApiUrl.contains('"')) {
-        licenseApiUrl = ''
-    }
-
     defaultConfig {
         applicationId 'com.example.bluetoothkanta'
         minSdk 26
         targetSdk 35
-        versionCode 7
-        versionName '7.1-JG-SecureBackend'
-        buildConfigField 'String', 'LICENSE_API_URL', '"' + licenseApiUrl + '"'
+        versionCode 8
+        versionName '8.0-JG-Direct-Firebase'
+
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
