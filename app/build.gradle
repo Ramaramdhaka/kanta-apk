@@ -1,13 +1,55 @@
-plugins { id 'com.android.application' }
+plugins {
+    id 'com.android.application'
+}
 
 android {
     namespace 'com.example.bluetoothkanta'
     compileSdk 35
+
     defaultConfig {
         applicationId 'com.example.bluetoothkanta'
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName '1.0'
+        versionCode 7
+        versionName '7.0-JG-Firebase'
     }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildFeatures {
+        buildConfig true
+    }
+    signingConfigs {
+        release {
+            if (System.getenv('JG_KEYSTORE_PATH')) {
+                storeFile file(System.getenv('JG_KEYSTORE_PATH'))
+                storePassword System.getenv('JG_STORE_PASSWORD')
+                keyAlias System.getenv('JG_KEY_ALIAS')
+                keyPassword System.getenv('JG_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            minifyEnabled false
+            shrinkResources false
+            buildConfigField 'String', 'EXPECTED_SIGNATURE_SHA256', '"PASTE_RELEASE_SHA256_HERE"'
+        }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            def certHash = System.getenv('JG_EXPECTED_SIGNATURE_SHA256') ?: 'PASTE_RELEASE_SHA256_HERE'
+            buildConfigField 'String', 'EXPECTED_SIGNATURE_SHA256', '"' + certHash + '"'
+            if (System.getenv('JG_KEYSTORE_PATH')) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.security:security-crypto:1.1.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 }
