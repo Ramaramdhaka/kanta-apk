@@ -65,40 +65,86 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Detect signing secrets
+      - name: Check release signing setup
         id: signing
         shell: bash
         env:
-          KEY_B64: ${{ secrets.JG_RELEASE_KEYSTORE_BASE64 }}
+          WRAP_SECRET: ${{ secrets.JG_KEYSTORE_WRAP_SECRET }}
           STORE_PASS: ${{ secrets.JG_RELEASE_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.JG_RELEASE_KEY_ALIAS }}
-          KEY_PASS: ${{ secrets.JG_RELEASE_KEY_PASSWORD }}
+          OLD_KEY_B64: ${{ secrets.JG_RELEASE_KEYSTORE_BASE64 }}
+          OLD_KEY_ALIAS: ${{ secrets.JG_RELEASE_KEY_ALIAS }}
+          OLD_KEY_PASS: ${{ secrets.JG_RELEASE_KEY_PASSWORD }}
         run: |
-          if [[ -n "$KEY_B64" && -n "$STORE_PASS" && -n "$KEY_ALIAS" && -n "$KEY_PASS" ]]; then
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -f signing/jg-release.p12.gpg && -f signing/jg-release.sha256.txt \
+             && -n "$WRAP_SECRET" && -n "$STORE_PASS" ]]; then
+            echo 'mode=encrypted' >> "$GITHUB_OUTPUT"
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          elif [[ -n "$OLD_KEY_B64" && -n "$STORE_PASS" \
+             && -n "$OLD_KEY_ALIAS" && -n "$OLD_KEY_PASS" ]]; then
+            echo 'mode=legacy' >> "$GITHUB_OUTPUT"
             echo 'ready=true' >> "$GITHUB_OUTPUT"
           else
             echo 'ready=false' >> "$GITHUB_OUTPUT"
-            echo 'No signing secrets configured.'
+            echo 'No release signing setup; compiling unsigned minified release.'
           fi
 
-      - name: Restore release keystore from secret
-        if: steps.signing.outputs.ready == 'true'
+      - name: Decrypt permanent release signing keystore
+        if: steps.signing.outputs.mode == 'encrypted'
+        shell: bash
+        env:
+          WRAP_SECRET: ${{ secrets.JG_KEYSTORE_WRAP_SECRET }}
+          JG_STORE_PASSWORD: ${{ secrets.JG_RELEASE_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          keypath="$RUNNER_TEMP/jg-release.p12"
+          printf '%s' "$WRAP_SECRET" | \
+            gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
+            --decrypt --output "$keypath" signing/jg-release.p12.gpg
+          keytool -list -keystore "$keypath" -storetype PKCS12 \
+            -storepass "$JG_STORE_PASSWORD" -alias jg >/dev/null
+          public_fp=$(cat signing/jg-release.sha256.txt)
+          [[ "$public_fp" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          actual_fp=$(keytool -list -v -keystore "$keypath" -storetype PKCS12 \
+            -storepass "$JG_STORE_PASSWORD" -alias jg \
+            | awk '/SHA256:/{print $2;exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          [[ "$actual_fp" == "$public_fp" ]] || { echo 'Release certificate mismatch'; exit 1; }
+          echo "JG_KEYSTORE_PATH=$keypath" >> "$GITHUB_ENV"
+          echo 'JG_KEY_ALIAS=jg' >> "$GITHUB_ENV"
+          echo "JG_EXPECTED_SIGNATURE_SHA256=$actual_fp" >> "$GITHUB_ENV"
+
+      - name: Restore legacy signing keystore (if previously configured)
+        if: steps.signing.outputs.mode == 'legacy'
         shell: bash
         env:
           KEY_B64: ${{ secrets.JG_RELEASE_KEYSTORE_BASE64 }}
         run: |
+          umask 077
           printf '%s' "$KEY_B64" | base64 --decode > "$RUNNER_TEMP/jg-release.jks"
-          chmod 600 "$RUNNER_TEMP/jg-release.jks"
           echo "JG_KEYSTORE_PATH=$RUNNER_TEMP/jg-release.jks" >> "$GITHUB_ENV"
 
       - name: Verify R8 minified release builds
         shell: bash
         env:
           JG_STORE_PASSWORD: ${{ secrets.JG_RELEASE_STORE_PASSWORD }}
-          JG_KEY_ALIAS: ${{ secrets.JG_RELEASE_KEY_ALIAS }}
-          JG_KEY_PASSWORD: ${{ secrets.JG_RELEASE_KEY_PASSWORD }}
-          JG_EXPECTED_SIGNATURE_SHA256: ${{ secrets.JG_EXPECTED_SIGNATURE_SHA256 }}
-        run: gradle --no-daemon --stacktrace :app:assembleRelease
+          JG_KEY_PASSWORD: ${{ secrets.JG_RELEASE_STORE_PASSWORD }}
+          JG_EXPECTED_SIGNATURE_SHA256_LEGACY: ${{ secrets.JG_EXPECTED_SIGNATURE_SHA256 }}
+          JG_KEY_ALIAS_LEGACY: ${{ secrets.JG_RELEASE_KEY_ALIAS }}
+          JG_KEY_PASSWORD_LEGACY: ${{ secrets.JG_RELEASE_KEY_PASSWORD }}
+        run: |
+          if [[ "${{ steps.signing.outputs.mode }}" == 'legacy' ]]; then
+            echo "JG_KEY_ALIAS=$JG_KEY_ALIAS_LEGACY" >> "$GITHUB_ENV"
+            echo "JG_KEY_PASSWORD=$JG_KEY_PASSWORD_LEGACY" >> "$GITHUB_ENV"
+            export JG_KEY_ALIAS="$JG_KEY_ALIAS_LEGACY"
+            export JG_KEY_PASSWORD="$JG_KEY_PASSWORD_LEGACY"
+            export JG_EXPECTED_SIGNATURE_SHA256="$JG_EXPECTED_SIGNATURE_SHA256_LEGACY"
+          fi
+          gradle --no-daemon --stacktrace :app:assembleRelease
 
       - name: Upload signed release APK when configured
         if: steps.signing.outputs.ready == 'true'
