@@ -1,9 +1,13 @@
-
 {
   "rules": {
     "keys": {
       ".read": "auth != null && auth.uid == 'QFhyikjUbYZ3eL3I1QQh0CHYfJR2'",
-      ".write": "auth != null && auth.uid == 'QFhyikjUbYZ3eL3I1QQh0CHYfJR2'"
+      ".write": "auth != null && auth.uid == 'QFhyikjUbYZ3eL3I1QQh0CHYfJR2'",
+      "$key": {
+        ".read": true,
+        ".write": "auth != null && auth.uid == 'QFhyikjUbYZ3eL3I1QQh0CHYfJR2' || (data.exists() && newData.exists() && data.child('status').val() == 'ACTIVE' && newData.child('customer').val() == data.child('customer').val() && newData.child('type').val() == data.child('type').val() && newData.child('expiry').val() == data.child('expiry').val() && ((data.child('type').val() == 'DEVICE_LOCK' && (data.child('deviceId').val() == '' || !data.child('deviceId').exists()) && newData.child('status').val() == 'ACTIVE' && newData.child('deviceId').isString() && newData.child('deviceId').val().matches(/^[0-9a-fA-F]{8,64}$/)) || (data.child('type').val() == 'ONE_TIME' && newData.child('status').val() == 'USED' && newData.child('deviceId').isString() && newData.child('deviceId').val().matches(/^[0-9a-fA-F]{8,64}$/))))",
+        ".validate": "newData.hasChildren(['customer','status','type','deviceId','expiry']) && newData.child('customer').isString() && newData.child('status').isString() && newData.child('type').isString() && newData.child('deviceId').isString() && newData.child('expiry').isString()"
+      }
     }
   }
 }
