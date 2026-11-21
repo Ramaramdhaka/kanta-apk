@@ -148,8 +148,8 @@ jobs:
           fi
           gradle --no-daemon --stacktrace :app:assembleRelease
 
-      - name: Upload signed release APK when configured
-        if: steps.signing.outputs.ready == 'true'
+      - name: Upload signed release APK when backend and signing configured
+        if: steps.signing.outputs.ready == 'true' && env.JG_LICENSE_API_URL != ''
         uses: actions/upload-artifact@v4
         with:
           name: JG-Kanta-signed-release-APK
