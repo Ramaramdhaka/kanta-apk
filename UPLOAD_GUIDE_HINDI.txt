@@ -1,0 +1,26 @@
+BLUETOOTH KANTA - GITHUB ME UPLOAD KARNE KE STEPS
+================================================
+
+1. BluetoothKanta_Fixed_GitHub.zip ko DOWNLOAD karke EXTRACT karo.
+2. GitHub kholo: https://github.com/Ramaramdhaka/kanta-apk
+3. Code -> Add file -> Upload files par click karo.
+4. EXTRACT kiye folder ke ANDAR ki SARI files/folders drag karke upload karo:
+   .github    (folder)
+   app        (folder)
+   README.md
+   build.gradle
+   settings.gradle
+   UPLOAD_GUIDE_HINDI.txt (optional)
+5. Dhyan do ki project files repo ke ROOT me ho; extra folder na ho.
+6. Commit changes dabao.
+7. Actions -> Build Bluetooth Kanta APK -> latest run kholo.
+8. GREEN TICK aane par Artifacts -> BluetoothKanta-APK download karo.
+9. Download ZIP extract karke app-debug.apk mobile me install karo.
+
+CHECK: GitHub Code page me "app" folder dikhna chahiye.
+CHECK: .github/workflows/build.yml file dikhni chahiye.
+
+ZIP file directly upload MAT karna. Pehle extract karna.
+
+NOTE: Project ka build GitHub par abhi run karke verify nahi hua hai.
+NOTE: Bluetooth Classic SPP-compatible receiving device chahiye.
