@@ -88,8 +88,18 @@ public class MainActivity extends Activity {
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        if (!SecurityGuard.enforce(this)) return;
         prefs = getSharedPreferences("jg_ui", MODE_PRIVATE);
-        licenseStore = new LicenseStore(this);
+        try {
+            licenseStore = new LicenseStore(this);
+        } catch (Exception storageFailure) {
+            LinearLayout problem = base(Gravity.CENTER);
+            title(problem, "JG", 42, Gravity.CENTER);
+            label(problem, "Secure license storage unavailable. Please reinstall or contact support.",
+                    16, RED, Gravity.CENTER);
+            setContentView(problem);
+            return;
+        }
         BluetoothManager mgr = (BluetoothManager) getSystemService(BLUETOOTH_SERVICE);
         bluetooth = mgr == null ? null : mgr.getAdapter();
         savedInterval = prefs.getInt("interval_ms", 100);
@@ -102,7 +112,7 @@ public class MainActivity extends Activity {
         super.onStart();
         // Returning from Home, Recents, or Bluetooth Settings counts as reopening.
         // Recheck online. A ONE_TIME key lives only in memory within this process.
-        if (wasBackgrounded && licensed && activeKey != null && "DEVICE_LOCK".equals(licenseType)) {
+        if (wasBackgrounded && licensed && activeKey != null && Obfuscated.deviceLock().equals(licenseType)) {
             wasBackgrounded = false;
             stopTransport();
             checkLicense(activeKey, true);
@@ -141,15 +151,16 @@ public class MainActivity extends Activity {
             if (loginError != null) { loginError.setText("Checking license..."); loginError.setTextColor(MUTED); }
         }
         network.execute(() -> {
-            LicenseVerifier.Result result = LicenseVerifier.verify(getApplicationContext(), key);
+            LicenseVerifier.Result result = LicenseVerifier.verify(getApplicationContext(), key, silent);
             main.post(() -> {
                 if (destroyed) return;
                 working = false;
                 if (result.valid) {
+                    licenseStore.resetFailures();
                     activeKey = key;
                     licenseType = result.type;
                     expiry = result.expiry;
-                    if ("DEVICE_LOCK".equals(result.type)) {
+                    if (Obfuscated.deviceLock().equals(result.type)) {
                         try { licenseStore.saveDeviceLockKey(key); }
                         catch (Exception e) {
                             activeKey = null;
@@ -166,21 +177,27 @@ public class MainActivity extends Activity {
                         Toast.makeText(this, result.message, Toast.LENGTH_LONG).show();
                     }
                 } else {
+                    if (!silent && result.badKeyAttempt) licenseStore.failAttempt();
                     stopTransport();
                     activeKey = null;
                     licensed = false;
                     if (result.serverRejected) {
                         licenseStore.clear(); // HOLD, expiry, revoked -> force login.
-                        showLogin(result.message);
+                        showLogin(loginErrorText(result.message));
                     } else if (silent) {
                         // Offline, network error, invalid response token: fail closed, retry only.
                         showBlocked(result.message, key);
                     } else {
-                        showLogin(result.message);
+                        showLogin(loginErrorText(result.message));
                     }
                 }
             });
         });
+    }
+
+    private String loginErrorText(String message) {
+        return licenseStore.lockRemainingMs() > 0
+                ? "Too many wrong attempts! Try again after 10 minutes." : message;
     }
 
     private void showSplash(String label) {
@@ -246,7 +263,21 @@ public class MainActivity extends Activity {
         loginError = label(card, error == null ? "Internet is required every time the app opens." : error,
                 13, error == null ? MUTED : RED, Gravity.CENTER);
         loginError.setPadding(0, dp(10), 0, 0);
+        long remainingLock = licenseStore.lockRemainingMs();
+        if (remainingLock > 0) {
+            loginButton.setEnabled(false);
+            loginError.setText("Too many wrong attempts! Try again after 10 minutes.");
+            loginError.setTextColor(RED);
+            scheduleLockoutRefresh(loginButton, loginError);
+        }
         loginButton.setOnClickListener(v -> {
+            if (licenseStore.lockRemainingMs() > 0) {
+                loginButton.setEnabled(false);
+                loginError.setText("Too many wrong attempts! Try again after 10 minutes.");
+                loginError.setTextColor(RED);
+                scheduleLockoutRefresh(loginButton, loginError);
+                return;
+            }
             String typed = keyEdit.getText().toString().trim();
             if (!typed.matches("[0-9]{8}")) {
                 loginError.setText("Enter an 8-digit numeric License Key");
@@ -259,6 +290,23 @@ public class MainActivity extends Activity {
         });
         setContentView(content);
         if (error != null && !error.isEmpty()) Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+    }
+
+    private void scheduleLockoutRefresh(Button button, TextView text) {
+        main.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (destroyed || loginButton != button || loginError != text) return;
+                if (licenseStore.lockRemainingMs() <= 0) {
+                    button.setEnabled(true);
+                    text.setText("You can try again.");
+                    text.setTextColor(MUTED);
+                } else {
+                    button.setEnabled(false);
+                    text.setText("Too many wrong attempts! Try again after 10 minutes.");
+                    main.postDelayed(this, 1000);
+                }
+            }
+        }, 1000);
     }
 
     private void showMain() {
