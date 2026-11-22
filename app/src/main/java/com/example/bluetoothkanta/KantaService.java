@@ -195,6 +195,12 @@ public final class KantaService extends Service {
             Toast.makeText(this, "Verify your JG license first", Toast.LENGTH_SHORT).show();
             return false;
         }
+        if (Build.VERSION.SDK_INT >= 31 &&
+                checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) !=
+                        android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "Allow Nearby devices permission in JG", Toast.LENGTH_SHORT).show();
+            return false;
+        }
         return true;
     }
 
@@ -248,6 +254,8 @@ public final class KantaService extends Service {
                 .addAction(android.R.drawable.ic_media_pause, "STOP SERVICE", stopPending)
                 .build();
     }
+
+    void endAuthorizedSession() { endSession(); }
 
     private void endSession() {
         authorized = false;

@@ -10,8 +10,8 @@ android {
         applicationId 'com.example.bluetoothkanta'
         minSdk 26
         targetSdk 35
-        versionCode 8
-        versionName '8.0-JG-Direct-Firebase'
+        versionCode 9
+        versionName '9.0-JG-Floating'
 
     }
     compileOptions {
@@ -52,6 +52,7 @@ android {
 
 dependencies {
     implementation 'androidx.security:security-crypto:1.1.0'
+    implementation 'androidx.core:core:1.15.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'com.google.errorprone:error_prone_annotations:2.36.0'
 }
