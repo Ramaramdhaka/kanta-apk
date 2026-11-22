@@ -74,6 +74,22 @@ public class MainActivity extends Activity {
     private BluetoothController transport;
     private KantaService kantaService;
     private boolean boundToService;
+    private boolean working = false;
+    private boolean licensed = false;
+    private boolean wasBackgrounded = false;
+    private boolean settingsShowing = false;
+    private boolean destroyed = false;
+    private String activeKey;
+    private String licenseType = "";
+    private String expiry = "";
+
+    private TextView mainStatus, sentCount, frameLabel, settingsLog, realNameLabel, loginError;
+    private EditText weightEdit, intervalEdit, deviceNameEdit;
+    private Spinner receiver1, receiver2;
+    private Button loginButton;
+    private ProgressBar loginSpinner;
+    private int savedInterval = 100;
+
     private final KantaService.UiListener serviceObserver = (status, connected, sent, log) -> {
         if (mainStatus != null && !settingsShowing) {
             mainStatus.setText(status);
@@ -104,21 +120,6 @@ public class MainActivity extends Activity {
             }
         }
     };
-    private boolean working = false;
-    private boolean licensed = false;
-    private boolean wasBackgrounded = false;
-    private boolean settingsShowing = false;
-    private boolean destroyed = false;
-    private String activeKey;
-    private String licenseType = "";
-    private String expiry = "";
-
-    private TextView mainStatus, sentCount, frameLabel, settingsLog, realNameLabel, loginError;
-    private EditText weightEdit, intervalEdit, deviceNameEdit;
-    private Spinner receiver1, receiver2;
-    private Button loginButton;
-    private ProgressBar loginSpinner;
-    private int savedInterval = 100;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
