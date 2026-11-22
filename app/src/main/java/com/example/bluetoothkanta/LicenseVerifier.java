@@ -79,7 +79,10 @@ public final class LicenseVerifier {
             credentials = FirebaseLicenseSession.credentials(context.getApplicationContext());
             path = FirebaseLicenseSession.hashedKey(key);
         } catch (Exception authFailure) {
-            return blocked("Firebase authentication / App Check unavailable. Contact support.");
+            // Show the failure stage, without leaking Firebase tokens or secrets.
+            String explanation = authFailure.getMessage();
+            if (explanation == null || explanation.length() > 120) explanation = "Unknown authentication error";
+            return blocked(explanation);
         }
 
         final String url = Obfuscated.baseUrl() + "licenses/" + path + ".json?auth=" +
@@ -154,11 +157,14 @@ public final class LicenseVerifier {
     }
 
     private static Snapshot load(String url, String appCheck) throws Exception {
-        Request request = new Request.Builder().url(url)
+        Request.Builder requestBuilder = new Request.Builder().url(url)
                 .header("Accept", "application/json")
-                .header("X-Firebase-AppCheck", appCheck)
                 .header("Cache-Control", "no-store")
-                .header("X-Firebase-ETag", "true").get().build();
+                .header("X-Firebase-ETag", "true");
+        if (appCheck != null && !appCheck.isEmpty()) {
+            requestBuilder.header("X-Firebase-AppCheck", appCheck);
+        }
+        Request request = requestBuilder.get().build();
         try (Response response = HTTP.newCall(request).execute()) {
             if (response.code() != 200) throw new HttpFailure(response.code());
             if (response.body() == null) throw new IOException("Empty response");
@@ -175,11 +181,13 @@ public final class LicenseVerifier {
     private static int claim(String url, String etag, JSONObject record, String appCheck) throws Exception {
         RequestBody body = RequestBody.create(record.toString(),
                 MediaType.parse("application/json; charset=utf-8"));
-        Request request = new Request.Builder().url(url)
+        Request.Builder requestBuilder = new Request.Builder().url(url)
                 .header("if-match", etag)
-                .header("X-Firebase-AppCheck", appCheck)
-                .header("Cache-Control", "no-store")
-                .put(body).build();
+                .header("Cache-Control", "no-store");
+        if (appCheck != null && !appCheck.isEmpty()) {
+            requestBuilder.header("X-Firebase-AppCheck", appCheck);
+        }
+        Request request = requestBuilder.put(body).build();
         try (Response response = HTTP.newCall(request).execute()) {
             return response.code();
         }
