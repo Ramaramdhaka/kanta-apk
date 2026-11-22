@@ -185,6 +185,17 @@ public class MainActivity extends Activity {
         transport = null;
     }
 
+    private void startServiceWithBluetoothPermission() {
+        if (Build.VERSION.SDK_INT >= 31 && !allowedConnect()) {
+            requestPermissions(new String[]{
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.BLUETOOTH_ADVERTISE
+            }, RC_BLUETOOTH);
+            return;
+        }
+        bindToKanta();
+    }
+
     private void bindToKanta() {
         if (boundToService || !licensed || activeKey == null) return;
         Intent intent = new Intent(this, KantaService.class).setAction(KantaService.ACTION_RUN);
@@ -244,7 +255,7 @@ public class MainActivity extends Activity {
                         showMain();
                     } else {
                         showSplash("Starting JG Bluetooth service...");
-                        bindToKanta();
+                        startServiceWithBluetoothPermission();
                     }
                     if (!silent && result.message != null && !result.message.isEmpty()) {
                         Toast.makeText(this, result.message, Toast.LENGTH_LONG).show();
@@ -783,6 +794,10 @@ public class MainActivity extends Activity {
         super.onRequestPermissionsResult(code, requested, results);
         if (code == RC_BLUETOOTH) {
             toast(allowedConnect() && allowedAdvertise() ? "Bluetooth permission granted" : "Allow Nearby devices permission");
+            if (licensed && !boundToService && kantaService == null) {
+                if (allowedConnect()) bindToKanta();
+                else showBlocked("Nearby devices permission is required for Bluetooth service.", activeKey);
+            }
             if (settingsShowing) { refreshDeviceName(); populatePaired(); }
         }
     }
