@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "147990234609",
+    "firebase_url": "https://apk-license-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "apk-license",
+    "storage_bucket": "apk-license.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:147990234609:android:5bd16e393ff91b10517050",
+        "android_client_info": {
+          "package_name": "com.example.bluetoothkanta"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCEoeUHgkWAmHm5n9OPFw_8xRQUdzIPQ9Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
