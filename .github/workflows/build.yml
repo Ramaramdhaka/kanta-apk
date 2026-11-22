@@ -151,6 +151,18 @@ jobs:
           fi
           gradle --no-daemon --stacktrace :app:assembleRelease
 
+      - name: Ensure no VCS metadata is included in the release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/release/app-release.apk
+          test -f "$apk"
+          if unzip -Z1 "$apk" | grep -Fxq 'META-INF/version-control-info.textproto'; then
+            echo 'ERROR: VCS metadata unexpectedly included in release APK'
+            exit 1
+          fi
+          echo 'Release APK is free from META-INF/version-control-info.textproto'
+
       - name: Upload signed release APK when signing and Firebase config are ready
         if: steps.signing.outputs.ready == 'true' && env.JG_FIREBASE_API_KEY != '' && env.JG_FIREBASE_APP_ID != '' && env.JG_FIREBASE_PROJECT_ID != '' && env.JG_LICENSE_HASH_SALT != ''
         uses: actions/upload-artifact@v4
