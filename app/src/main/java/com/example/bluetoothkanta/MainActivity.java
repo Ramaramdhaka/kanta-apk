@@ -10,6 +10,8 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.ActivityNotFoundException;
+import android.net.Uri;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -263,6 +265,18 @@ public class MainActivity extends Activity {
         loginError = label(card, error == null ? "Internet is required every time the app opens." : error,
                 13, error == null ? MUTED : RED, Gravity.CENTER);
         loginError.setPadding(0, dp(10), 0, 0);
+        space(content, 14);
+        action(content, "KEY • BUY NOW", FIELD, WHITE, this::openLicensePurchase);
+        space(content, 12);
+        LinearLayout plans = panel();
+        content.addView(plans);
+        label(plans, "LICENSE KEY PRICES", 12, MUTED, Gravity.START);
+        space(plans, 8);
+        label(plans, "30 Days  —  ₹300", 16, WHITE, Gravity.START);
+        space(plans, 7);
+        label(plans, "1 Year      —  ₹1200", 16, WHITE, Gravity.START);
+        space(plans, 7);
+        label(plans, "Life Time  —  ₹2000", 16, WHITE, Gravity.START);
         long remainingLock = licenseStore.lockRemainingMs();
         if (remainingLock > 0) {
             loginButton.setEnabled(false);
@@ -288,8 +302,20 @@ public class MainActivity extends Activity {
             loginSpinner.setVisibility(View.VISIBLE);
             checkLicense(typed, false);
         });
-        setContentView(content);
+        setContentView(scroll(content));
         if (error != null && !error.isEmpty()) Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+    }
+
+    private void openLicensePurchase() {
+        String message = "Hello, I want to buy a JG Kanta License Key. " +
+                "Plans: 30 Days - Rs 300, 1 Year - Rs 1200, Life Time - Rs 2000. " +
+                "Please share payment details.";
+        Uri link = Uri.parse("https://wa.me/918094251586?text=" + Uri.encode(message));
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, link));
+        } catch (ActivityNotFoundException e) {
+            toast("Unable to open WhatsApp link. Please check your browser.");
+        }
     }
 
     private void scheduleLockoutRefresh(Button button, TextView text) {
@@ -350,6 +376,8 @@ public class MainActivity extends Activity {
         weightEdit.setTextSize(34);
         weightEdit.setGravity(Gravity.CENTER);
         panel.addView(weightEdit);
+        space(panel, 12);
+        addWeightShortcuts(panel);
         space(panel, 15);
         frameLabel = label(panel, "WT020.000KG ", 15, TEAL, Gravity.CENTER);
         weightEdit.addTextChangedListener(new TextWatcher() {
@@ -387,6 +415,36 @@ public class MainActivity extends Activity {
         label(content, "Classic Bluetooth SPP   •   Up to 2 receivers", 12, MUTED, Gravity.CENTER);
         setContentView(scroll(content));
         ensureBluetooth();
+    }
+
+    private void addWeightShortcuts(LinearLayout parent) {
+        final String[] shortcuts = {"5", "10", "15", "20", "25", "30", "35", "40", "45", "50"};
+        for (int row = 0; row < 2; row++) {
+            LinearLayout line = horizontal();
+            parent.addView(line, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+            for (int column = 0; column < 5; column++) {
+                final String weight = shortcuts[row * 5 + column];
+                Button choice = new Button(this);
+                choice.setText(weight);
+                choice.setAllCaps(false);
+                choice.setTextSize(14);
+                choice.setTextColor(WHITE);
+                choice.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+                choice.setMinWidth(0);
+                choice.setMinimumWidth(0);
+                choice.setPadding(0, 0, 0, 0);
+                choice.setBackground(shape(FIELD, Color.rgb(53, 71, 96)));
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(42), 1f);
+                params.setMargins(dp(2), 0, dp(2), 0);
+                line.addView(choice, params);
+                choice.setOnClickListener(v -> {
+                    weightEdit.setText(weight);
+                    weightEdit.setSelection(weightEdit.getText().length());
+                });
+            }
+            if (row == 0) space(parent, 5);
+        }
     }
 
     private void updateWeight(String value) {
