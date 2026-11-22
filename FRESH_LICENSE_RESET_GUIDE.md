@@ -2,6 +2,16 @@
 
 **Owner agreed that old license keys can stop working.** Do not delete Firebase records or revoke existing clients until the new signed APK, Firebase Rules, administrator dashboard and new license claiming have been tested on a real phone.
 
+## Fix admin HTTP 401 and permanently remember salt (2026-11-22)
+
+**Why 401 happens:** The admin can sign in and see legacy `/keys`, but the live Realtime Database Rules do not yet grant this admin write access under `/licenses`. No JavaScript change can override live database rules.
+
+**Fix:** If intentionally retiring all old licenses, open Firebase Console > Realtime Database > Rules, replace the existing rules with the final reviewed `database.rules.json` in this same branch, and press Publish. Admin access is bound to the existing UID and email. This immediately revokes old APK reads/claims; preserve the exported backup first. Do not press App Check Enforce; it remains Monitoring until web attestation is configured.
+
+**Domain and deployment:** The admin site shown by the owner is `https://jglegha.online/admin.html`. The GitHub source file and hosted website are distinct. After updating code in the security branch, deploy/copy the newest `admin.html` to the actual hosting serving `jglegha.online`. A browser hard reload alone cannot deploy GitHub changes. Do not deploy it publicly with a plaintext salt or credentials.
+
+**Encrypted salt vault:** After the updated page is deployed, log in using the Firebase admin email/password, enter your existing `JG_LICENSE_HASH_SALT` value once, click **Remember Salt on this browser**. The value is saved only as PBKDF2/SHA-256 (310,000 rounds) derived AES-GCM ciphertext in that browser's localStorage. The login password is NOT stored and is cleared from the form. The next login on the same browser/password automatically decrypts and restores the salt. If the admin password changes, or storage is cleared, restore from your password manager and click Remember again. The browser is a trust boundary; malicious browser extensions or device compromise can access the salt after login. No browser-local storage is a substitute for a secure off-device backup.
+
 ## Confirmed setup
 - Firebase Authentication Anonymous and Email/Password providers: enabled in Console
 - Android Firebase App Check Play Integrity: registered for the release certificate
