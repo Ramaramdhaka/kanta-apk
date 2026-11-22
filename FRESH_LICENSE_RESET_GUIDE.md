@@ -12,16 +12,12 @@
 
 ## Fresh cutover sequence
 
-1. **Do not use the legacy migration button.** This security branch's admin.html generates new 8-digit keys stored under hashed `/licenses/<sha256(key + salt)>`.
-2. Publish reviewed **database.rules.migration.json** in Firebase Console > Realtime Database > Rules. These allow:
-   - Existing /keys reads/claims temporarily, so old clients have not yet been cut off
-   - Admin-only creation under /licenses
-   - Anonymous authenticated client read of unclaimed license and ETag conditional first claim
-   Be aware: the old public access remains a risk during this phase.
+1. **No legacy migration needed.** The security branch's admin.html generates fresh 8-digit keys stored under hashed `/licenses/<sha256(key + salt)>`.
+2. Because old license keys can be retired, a **direct switch to final `database.rules.json`** is simpler than temporary migration rules. Publishing the final rules **immediately denies old /keys client access**. Only do this when intentionally ready to issue new keys to anyone still relying on old licenses. The verified admin UID+email remain authorized; App Check enforcement stays OFF.
 3. Open the actual HTTPS-hosted **admin.html** in a browser; GitHub's source-file `blob` page alone is not a hosted app. Log in using your own verified admin identity, and enter the same salt as GitHub's secret. **Never publish the salt in HTML source**, issue tracker, or chat.
 4. Generate **one fresh test key** for DEVICE_LOCK. Check that `/licenses` now contains a new 64-character hashed node. Keep the plaintext 8-digit number separately; hash cannot be reversed.
 5. Install the **security branch's signed release APK** on one test phone only. Verify Play Integrity token, anonymous sign-in, first claim, reopening with same account, expiry, another phone rejection, and Bluetooth/floating behavior. Do not install debug APK when testing release signature pinning.
-6. When new login and admin controls work, replace Rules with **database.rules.json** to restrict old /keys to admin only. This revokes legacy APK clients without needing to delete old keys.
+6. Once new login and admin controls work, confirm final Rules continue to block anonymous access to legacy /keys and allow only authorized first claims under /licenses.
 7. Once satisfied, delete old `/keys` subtree **manually in Firebase Console** after checking backup; that is irreversible for users still using previous keys. You may leave /keys present and admin-only instead of deleting.
 8. App Check Realtime Database enforcement remains OFF until **both** Android app and admin web app have been verified to supply valid App Check tokens. If you choose no admin Web App Check, keep enforcement OFF. Anonymous auth + per-node Firebase Rules still apply.
 
