@@ -2,156 +2,204 @@ package com.example.bluetoothkanta;
 
 import android.content.Context;
 import android.provider.Settings;
-
 import org.json.JSONObject;
+import java.io.IOException;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
+import java.util.concurrent.TimeUnit;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.Locale;
-
-/** Verifies every opening and resume online. No offline bypass. */
+/**
+ * Fast direct HTTPS Firebase Realtime Database REST verifier.
+ * CLIENT SECURITY LIMITATION: unauthenticated read access to /keys/$key must be enabled
+ * in rules for this approach. Eight-digit keys are guessable; anti-brute-force in the
+ * app cannot stop external scripts. Use a trusted server for strong protection.
+ */
 public final class LicenseVerifier {
-    // WARNING: A secret embedded in an APK is extractable. Move signing to a server
-    // with asymmetric response signatures for production anti-tamper protection.
-    private static final String API_URL = "https://script.google.com/macros/s/AKfycbz31qN4KS3702BtwfttCHCIK_m6OgnWe24NQiOXoYolNUlhNgaXW5PdNpJ5-dIY6oDE/exec";
-    private static final String SHARED_SECRET = "JG_SECRET_KEY_2026_99";
+    private LicenseVerifier() {}
 
     public static final class Result {
         public final boolean valid;
         public final boolean serverRejected;
+        public final boolean badKeyAttempt;
         public final String message;
         public final String type;
         public final String expiry;
-        Result(boolean valid, boolean serverRejected, String message, String type, String expiry) {
+
+        Result(boolean valid, boolean serverRejected, boolean badKeyAttempt,
+                String message, String type, String expiry) {
             this.valid = valid;
             this.serverRejected = serverRejected;
+            this.badKeyAttempt = badKeyAttempt;
             this.message = message;
             this.type = type;
             this.expiry = expiry;
         }
     }
 
-    private LicenseVerifier() { }
+    private static Result success(String type, String expiry) {
+        return new Result(true, false, false, "License verified successfully.", type, expiry);
+    }
 
-    public static Result verify(Context context, String key) {
+    private static Result rejected(String message, boolean badKey) {
+        return new Result(false, true, badKey, message, "", "");
+    }
+
+    private static Result blocked(String message) {
+        return new Result(false, false, false, message, "", "");
+    }
+
+    private static final OkHttpClient HTTP = new OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(6, TimeUnit.SECONDS)
+            .callTimeout(12, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .followRedirects(false).followSslRedirects(false)
+            .build();
+
+    public static Result verify(Context context, String key, boolean savedDeviceLockRecheck) {
         if (key == null || !key.matches("[0-9]{8}")) {
-            return new Result(false, false, "Enter an 8-digit numeric License Key", "", "");
+            return rejected("Enter an 8-digit numeric License Key", true);
         }
         if (!NetUtil.hasInternet(context)) {
-            return new Result(false, false, "Internet connection required to verify license", "", "");
+            return blocked("Internet connection required to verify license");
         }
-        String deviceId = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
-        if (deviceId == null || deviceId.isEmpty()) {
-            return new Result(false, false, "Unable to read Device ID", "", "");
+        String device = Settings.Secure.getString(
+                context.getContentResolver(), Settings.Secure.ANDROID_ID);
+        if (device == null || !device.matches("[0-9a-fA-F]{8,64}")) {
+            return blocked("Unable to read Android Device ID.");
         }
-        long ts = System.currentTimeMillis() / 1000L;
-        String signature = sha256(key + "|" + deviceId + "|" + ts + "|" + SHARED_SECRET);
-        String expectedToken = sha256("VALID|" + key + "|" + deviceId + "|" + ts + "|" + SHARED_SECRET);
-        HttpURLConnection connection = null;
+        // All strings are XOR-obfuscated in Obfuscated.java and decrypted only when needed.
+        final String url = Obfuscated.baseUrl() + Obfuscated.endpoint() + key + ".json";
         try {
-            String requestUrl = API_URL + "?action=verify&key=" + enc(key)
-                    + "&device=" + enc(deviceId) + "&ts=" + ts + "&sig=" + signature;
-            URL current = new URL(requestUrl);
-            // Google Apps Script's ContentService responds with HTTP 302 to googleusercontent.com.
-            // Explicitly follow up to 6 HTTPS redirects, never forwarding data to other domains.
-            for (int i = 0; i < 7; i++) {
-                if (!"https".equalsIgnoreCase(current.getProtocol()) || !allowedHost(current.getHost())) {
-                    return new Result(false, false, "Blocked unsafe API redirect", "", "");
+            for (int attempt = 0; attempt < 3; attempt++) {
+                Snapshot snapshot = load(url);
+                if (snapshot.value == null) {
+                    return rejected("Invalid License Key!", true);
                 }
-                connection = (HttpURLConnection) current.openConnection();
-                connection.setInstanceFollowRedirects(false);
-                connection.setRequestMethod("GET");
-                connection.setConnectTimeout(12000);
-                connection.setReadTimeout(15000);
-                connection.setRequestProperty("Accept", "application/json");
-                connection.setUseCaches(false);
-                int code = connection.getResponseCode();
-                if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
-                    String location = connection.getHeaderField("Location");
-                    connection.disconnect();
-                    connection = null;
-                    if (location == null || location.trim().isEmpty()) {
-                        return new Result(false, false, "API redirect missing Location", "", "");
+                JSONObject record = snapshot.value;
+                String status = record.optString(Obfuscated.status(), "");
+                String type = record.optString(Obfuscated.type(), "");
+                String expiry = record.optString(Obfuscated.expiry(), "");
+                String registered = record.optString(Obfuscated.deviceId(), "").trim();
+
+                if (Obfuscated.hold().equals(status)) {
+                    return rejected("Your Key is on HOLD (Locked).", false);
+                }
+                if (Obfuscated.used().equals(status)) {
+                    return rejected("This One-Time Key has already been used.", false);
+                }
+                if (!Obfuscated.active().equals(status)) {
+                    return rejected("License Key is not ACTIVE.", false);
+                }
+
+                try {
+                    LocalDate end = LocalDate.parse(expiry);
+                    if (LocalDate.now(ZoneId.systemDefault()).isAfter(end)) {
+                        return rejected("Your License Key has Expired.", false);
                     }
-                    current = new URL(current, location);
-                    continue;
+                } catch (DateTimeParseException invalidDate) {
+                    return rejected("Invalid license expiry date.", false);
                 }
-                InputStream stream = code >= 200 && code < 400 ? connection.getInputStream() : connection.getErrorStream();
-                String text = readText(stream);
-                connection.disconnect();
-                connection = null;
-                JSONObject reply;
-                try { reply = new JSONObject(text); }
-                catch (Exception invalidJson) {
-                    return new Result(false, false, "API returned an invalid response (HTTP " + code + ")", "", "");
+
+                if (Obfuscated.deviceLock().equals(type)) {
+                    if (!registered.isEmpty()) {
+                        if (!registered.equalsIgnoreCase(device)) {
+                            return rejected("This Key is already registered on another mobile.", false);
+                        }
+                        return success(type, expiry); // one fast GET per relaunch
+                    }
+                    if (savedDeviceLockRecheck) {
+                        return rejected("Saved license device binding was removed.", false);
+                    }
+                    JSONObject updated = new JSONObject(record.toString());
+                    updated.put(Obfuscated.deviceId(), device);
+                    int responseCode = commit(url, snapshot.etag, updated);
+                    if (responseCode == 200) return success(type, expiry);
+                    if (responseCode == 412) continue; // simultaneous device claim; retry GET
+                    if (responseCode == 401 || responseCode == 403) {
+                        return blocked("Firebase activation denied by database Rules.");
+                    }
+                    return blocked("Firebase activation failed (HTTP " + responseCode + ").");
                 }
-                String message = reply.optString("message", "License verification failed");
-                boolean valid = reply.optBoolean("valid", false);
-                if (!valid) {
-                    // Show exact server message; do not overwrite it with a generic error.
-                    return new Result(false, true, message, "", "");
+
+                if (Obfuscated.oneTime().equals(type)) {
+                    if (savedDeviceLockRecheck) {
+                        return rejected("Saved license is not a DEVICE_LOCK key.", false);
+                    }
+                    JSONObject updated = new JSONObject(record.toString());
+                    updated.put(Obfuscated.status(), Obfuscated.used());
+                    updated.put(Obfuscated.deviceId(), device);
+                    int responseCode = commit(url, snapshot.etag, updated);
+                    if (responseCode == 200) return success(type, expiry);
+                    if (responseCode == 412) continue;
+                    if (responseCode == 401 || responseCode == 403) {
+                        return blocked("Firebase activation denied by database Rules.");
+                    }
+                    return blocked("Firebase activation failed (HTTP " + responseCode + ").");
                 }
-                String type = reply.optString("type", "");
-                String expiry = reply.optString("expiry", "");
-                String token = reply.optString("token", "");
-                boolean authenticated = MessageDigest.isEqual(
-                        token.getBytes(StandardCharsets.UTF_8),
-                        expectedToken.getBytes(StandardCharsets.UTF_8));
-                if (!authenticated) {
-                    return new Result(false, false, "Invalid server verification token", "", "");
-                }
-                if (!"DEVICE_LOCK".equals(type) && !"ONE_TIME".equals(type)) {
-                    return new Result(false, false, "Unsupported license type", "", "");
-                }
-                return new Result(true, false, message, type, expiry);
+                return rejected("Unsupported license type.", false);
             }
-            return new Result(false, false, "Too many API redirects", "", "");
-        } catch (Exception e) {
-            // Never print key/signature/secret/request URL in logs or error messages.
-            return new Result(false, false, "Could not verify license: " + e.getClass().getSimpleName()
-                    + ". Check internet and try again.", "", "");
-        } finally {
-            if (connection != null) connection.disconnect();
+            return blocked("License was changed during login. Try again.");
+        } catch (HttpFailure error) {
+            if (error.status == 401 || error.status == 403) {
+                return blocked("Firebase access denied. Check Realtime Database Rules.");
+            }
+            return blocked("Firebase error (HTTP " + error.status + "). Try again.");
+        } catch (Exception error) {
+            return blocked("Could not verify license. Check internet and try again.");
         }
     }
 
-    private static boolean allowedHost(String host) {
-        String h = host.toLowerCase(Locale.US);
-        return h.equals("script.google.com") || h.equals("script.googleusercontent.com");
-    }
-
-    private static String enc(String s) throws Exception {
-        return URLEncoder.encode(s, "UTF-8");
-    }
-
-    private static String readText(InputStream input) throws Exception {
-        if (input == null) return "";
-        try (InputStream stream = input; ByteArrayOutputStream result = new ByteArrayOutputStream()) {
-            byte[] b = new byte[4096];
-            int n;
-            while ((n = stream.read(b)) >= 0) {
-                if (n > 0) result.write(b, 0, n);
-                if (result.size() > 256 * 1024) throw new IllegalArgumentException("Response too large");
-            }
-            return result.toString("UTF-8");
+    private static Snapshot load(String url) throws Exception {
+        Request request = new Request.Builder()
+                .url(url).header("Accept", "application/json")
+                .header("Cache-Control", "no-store")
+                .header("X-Firebase-ETag", "true").get().build();
+        try (Response response = HTTP.newCall(request).execute()) {
+            if (response.code() != 200) throw new HttpFailure(response.code());
+            if (response.body() == null) throw new IOException("Empty Firebase body");
+            String text = response.body().string();
+            if (text.length() > 65536) throw new IOException("Firebase body too large");
+            String etag = response.header("ETag");
+            if (etag == null || etag.isEmpty()) throw new IOException("Missing Firebase ETag");
+            JSONObject body = text.trim().equals("null") || text.trim().isEmpty()
+                    ? null : new JSONObject(text);
+            return new Snapshot(body, etag);
         }
     }
 
-    private static String sha256(String text) {
-        try {
-            byte[] bytes = MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
-            char[] chars = "0123456789abcdef".toCharArray();
-            char[] hex = new char[bytes.length * 2];
-            for (int i = 0; i < bytes.length; i++) {
-                hex[i * 2] = chars[(bytes[i] >>> 4) & 0xF];
-                hex[i * 2 + 1] = chars[bytes[i] & 0xF];
-            }
-            return new String(hex);
-        } catch (Exception e) { throw new IllegalStateException("SHA-256 unavailable", e); }
+    private static int commit(String url, String etag, JSONObject updated) throws Exception {
+        RequestBody body = RequestBody.create(updated.toString(),
+                MediaType.parse("application/json; charset=utf-8"));
+        Request request = new Request.Builder()
+                .url(url).header("If-Match", etag)
+                .header("Cache-Control", "no-store")
+                .put(body).build();
+        try (Response response = HTTP.newCall(request).execute()) {
+            return response.code();
+        }
+    }
+
+    private static final class Snapshot {
+        final JSONObject value;
+        final String etag;
+        Snapshot(JSONObject value, String etag) {
+            this.value = value;
+            this.etag = etag;
+        }
+    }
+
+    private static final class HttpFailure extends IOException {
+        final int status;
+        HttpFailure(int status) {
+            super("HTTP error");
+            this.status = status;
+        }
     }
 }

@@ -9,7 +9,12 @@ import android.bluetooth.BluetoothManager;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.ComponentName;
+import android.content.ServiceConnection;
+import android.os.IBinder;
 import android.content.Intent;
+import android.content.ActivityNotFoundException;
+import android.net.Uri;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -67,6 +72,8 @@ public class MainActivity extends Activity {
     private LicenseStore licenseStore;
     private BluetoothAdapter bluetooth;
     private BluetoothController transport;
+    private KantaService kantaService;
+    private boolean boundToService;
     private boolean working = false;
     private boolean licensed = false;
     private boolean wasBackgrounded = false;
@@ -83,13 +90,54 @@ public class MainActivity extends Activity {
     private ProgressBar loginSpinner;
     private int savedInterval = 100;
 
+    private final KantaService.UiListener serviceObserver = (status, connected, sent, log) -> {
+        if (mainStatus != null && !settingsShowing) {
+            mainStatus.setText(status);
+            mainStatus.setTextColor(connected > 0 ? GREEN : MUTED);
+        }
+        if (sentCount != null && !settingsShowing) sentCount.setText("Frames sent: " + sent);
+        if (settingsLog != null && settingsShowing) settingsLog.setText(log);
+    };
+    private final ServiceConnection connection = new ServiceConnection() {
+        @Override public void onServiceConnected(ComponentName name, IBinder binder) {
+            if (!(binder instanceof KantaService.LocalBinder)) return;
+            kantaService = ((KantaService.LocalBinder) binder).service();
+            transport = kantaService.controller();
+            kantaService.attach(serviceObserver);
+            kantaService.setActivityVisible(true);
+            if (licensed && activeKey != null) {
+                kantaService.authorize(activeKey, licenseType);
+                showMain();
+            }
+        }
+        @Override public void onServiceDisconnected(ComponentName name) {
+            kantaService = null;
+            transport = null;
+            boundToService = false;
+            if (licensed && !destroyed) {
+                licensed = false;
+                showBlocked("JG background service disconnected. Reopen JG.", activeKey);
+            }
+        }
+    };
+
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        if (!SecurityGuard.enforce(this)) return;
         prefs = getSharedPreferences("jg_ui", MODE_PRIVATE);
-        licenseStore = new LicenseStore(this);
+        try {
+            licenseStore = new LicenseStore(this);
+        } catch (Exception storageFailure) {
+            LinearLayout problem = base(Gravity.CENTER);
+            title(problem, "JG", 42, Gravity.CENTER);
+            label(problem, "Secure license storage unavailable. Please reinstall or contact support.",
+                    16, RED, Gravity.CENTER);
+            setContentView(problem);
+            return;
+        }
         BluetoothManager mgr = (BluetoothManager) getSystemService(BLUETOOTH_SERVICE);
         bluetooth = mgr == null ? null : mgr.getAdapter();
         savedInterval = prefs.getInt("interval_ms", 100);
@@ -100,32 +148,72 @@ public class MainActivity extends Activity {
 
     @Override protected void onStart() {
         super.onStart();
-        // Returning from Home, Recents, or Bluetooth Settings counts as reopening.
-        // Recheck online. A ONE_TIME key lives only in memory within this process.
-        if (wasBackgrounded && licensed && activeKey != null && "DEVICE_LOCK".equals(licenseType)) {
+        if (wasBackgrounded && licensed && activeKey != null &&
+                Obfuscated.deviceLock().equals(licenseType)) {
             wasBackgrounded = false;
-            stopTransport();
             checkLicense(activeKey, true);
-        } else if (wasBackgrounded) {
-            // ONE_TIME remains valid during this same live app session only.
+        } else {
             wasBackgrounded = false;
+            if (licensed) bindToKanta();
         }
+        if (kantaService != null) kantaService.setActivityVisible(true);
     }
 
     @Override protected void onStop() {
         if (licensed) wasBackgrounded = true;
+        if (kantaService != null) {
+            kantaService.setActivityVisible(false);
+            kantaService.detach(serviceObserver);
+        }
+        unbindFromKanta();
         super.onStop();
     }
 
     @Override protected void onDestroy() {
         destroyed = true;
-        stopTransport();
+        unbindFromKanta();
+        // The foreground service owns all SPP sockets, not the Activity.
         network.shutdownNow();
         super.onDestroy();
     }
 
+    private void unbindFromKanta() {
+        if (boundToService) {
+            try { unbindService(connection); } catch (Exception ignored) { }
+            boundToService = false;
+        }
+        kantaService = null;
+        transport = null;
+    }
+
+    private void startServiceWithBluetoothPermission() {
+        if (Build.VERSION.SDK_INT >= 31 && !allowedConnect()) {
+            requestPermissions(new String[]{
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.BLUETOOTH_ADVERTISE
+            }, RC_BLUETOOTH);
+            return;
+        }
+        bindToKanta();
+    }
+
+    private void bindToKanta() {
+        if (boundToService || !licensed || activeKey == null) return;
+        Intent intent = new Intent(this, KantaService.class).setAction(KantaService.ACTION_RUN);
+        try {
+            startForegroundService(intent);
+            boundToService = bindService(new Intent(this, KantaService.class),
+                    connection, Context.BIND_AUTO_CREATE);
+            if (!boundToService) showBlocked("Could not connect to JG service.", activeKey);
+        } catch (Exception ex) {
+            showBlocked("Unable to start background Bluetooth service.", activeKey);
+        }
+    }
+
     private void stopTransport() {
-        if (transport != null) { transport.shutdown(); transport = null; }
+        KantaService active = KantaService.active();
+        if (active != null) active.endAuthorizedSession();
+        unbindFromKanta();
     }
 
     private void checkLicense(String key, boolean silent) {
@@ -141,15 +229,16 @@ public class MainActivity extends Activity {
             if (loginError != null) { loginError.setText("Checking license..."); loginError.setTextColor(MUTED); }
         }
         network.execute(() -> {
-            LicenseVerifier.Result result = LicenseVerifier.verify(getApplicationContext(), key);
+            LicenseVerifier.Result result = LicenseVerifier.verify(getApplicationContext(), key, silent);
             main.post(() -> {
                 if (destroyed) return;
                 working = false;
                 if (result.valid) {
+                    licenseStore.resetFailures();
                     activeKey = key;
                     licenseType = result.type;
                     expiry = result.expiry;
-                    if ("DEVICE_LOCK".equals(result.type)) {
+                    if (Obfuscated.deviceLock().equals(result.type)) {
                         try { licenseStore.saveDeviceLockKey(key); }
                         catch (Exception e) {
                             activeKey = null;
@@ -161,26 +250,40 @@ public class MainActivity extends Activity {
                         licenseStore.clear();
                     }
                     licensed = true;
-                    showMain();
+                    getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    if (kantaService != null) {
+                        kantaService.authorize(activeKey, licenseType);
+                        showMain();
+                    } else {
+                        showSplash("Starting JG Bluetooth service...");
+                        startServiceWithBluetoothPermission();
+                    }
                     if (!silent && result.message != null && !result.message.isEmpty()) {
                         Toast.makeText(this, result.message, Toast.LENGTH_LONG).show();
                     }
                 } else {
+                    if (!silent && result.badKeyAttempt) licenseStore.failAttempt();
                     stopTransport();
+                    getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                     activeKey = null;
                     licensed = false;
                     if (result.serverRejected) {
                         licenseStore.clear(); // HOLD, expiry, revoked -> force login.
-                        showLogin(result.message);
+                        showLogin(loginErrorText(result.message));
                     } else if (silent) {
                         // Offline, network error, invalid response token: fail closed, retry only.
                         showBlocked(result.message, key);
                     } else {
-                        showLogin(result.message);
+                        showLogin(loginErrorText(result.message));
                     }
                 }
             });
         });
+    }
+
+    private String loginErrorText(String message) {
+        return licenseStore.lockRemainingMs() > 0
+                ? "Too many wrong attempts! Try again after 10 minutes." : message;
     }
 
     private void showSplash(String label) {
@@ -246,7 +349,33 @@ public class MainActivity extends Activity {
         loginError = label(card, error == null ? "Internet is required every time the app opens." : error,
                 13, error == null ? MUTED : RED, Gravity.CENTER);
         loginError.setPadding(0, dp(10), 0, 0);
+        space(content, 14);
+        action(content, "KEY • BUY NOW", FIELD, WHITE, this::openLicensePurchase);
+        space(content, 12);
+        LinearLayout plans = panel();
+        content.addView(plans);
+        label(plans, "LICENSE KEY PRICES", 12, MUTED, Gravity.START);
+        space(plans, 8);
+        label(plans, "30 Days  —  ₹300", 16, WHITE, Gravity.START);
+        space(plans, 7);
+        label(plans, "1 Year      —  ₹1200", 16, WHITE, Gravity.START);
+        space(plans, 7);
+        label(plans, "Life Time  —  ₹2000", 16, WHITE, Gravity.START);
+        long remainingLock = licenseStore.lockRemainingMs();
+        if (remainingLock > 0) {
+            loginButton.setEnabled(false);
+            loginError.setText("Too many wrong attempts! Try again after 10 minutes.");
+            loginError.setTextColor(RED);
+            scheduleLockoutRefresh(loginButton, loginError);
+        }
         loginButton.setOnClickListener(v -> {
+            if (licenseStore.lockRemainingMs() > 0) {
+                loginButton.setEnabled(false);
+                loginError.setText("Too many wrong attempts! Try again after 10 minutes.");
+                loginError.setTextColor(RED);
+                scheduleLockoutRefresh(loginButton, loginError);
+                return;
+            }
             String typed = keyEdit.getText().toString().trim();
             if (!typed.matches("[0-9]{8}")) {
                 loginError.setText("Enter an 8-digit numeric License Key");
@@ -257,20 +386,42 @@ public class MainActivity extends Activity {
             loginSpinner.setVisibility(View.VISIBLE);
             checkLicense(typed, false);
         });
-        setContentView(content);
+        setContentView(scroll(content));
         if (error != null && !error.isEmpty()) Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+    }
+
+    private void openLicensePurchase() {
+        String message = "Hello, I want to buy a JG Kanta License Key. " +
+                "Plans: 30 Days - Rs 300, 1 Year - Rs 1200, Life Time - Rs 2000. " +
+                "Please share payment details.";
+        Uri link = Uri.parse("https://wa.me/918094251586?text=" + Uri.encode(message));
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, link));
+        } catch (ActivityNotFoundException e) {
+            toast("Unable to open WhatsApp link. Please check your browser.");
+        }
+    }
+
+    private void scheduleLockoutRefresh(Button button, TextView text) {
+        main.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (destroyed || loginButton != button || loginError != text) return;
+                if (licenseStore.lockRemainingMs() <= 0) {
+                    button.setEnabled(true);
+                    text.setText("You can try again.");
+                    text.setTextColor(MUTED);
+                } else {
+                    button.setEnabled(false);
+                    text.setText("Too many wrong attempts! Try again after 10 minutes.");
+                    main.postDelayed(this, 1000);
+                }
+            }
+        }, 1000);
     }
 
     private void showMain() {
         settingsShowing = false;
-        if (transport == null) transport = new BluetoothController(bluetooth, (status, connected, sent, log) -> {
-            if (mainStatus != null && !settingsShowing) {
-                mainStatus.setText(status);
-                mainStatus.setTextColor(connected > 0 ? GREEN : MUTED);
-            }
-            if (sentCount != null && !settingsShowing) sentCount.setText("Frames sent: " + sent);
-            if (settingsLog != null && settingsShowing) settingsLog.setText(log);
-        });
+        if (!licensed || kantaService == null || transport == null) return;
         transport.setIntervalMs(savedInterval);
         transport.setServiceName(prefs.getString("service_name", "JG"));
         LinearLayout content = base(Gravity.TOP);
@@ -302,8 +453,10 @@ public class MainActivity extends Activity {
         weightEdit.setTextSize(34);
         weightEdit.setGravity(Gravity.CENTER);
         panel.addView(weightEdit);
+        space(panel, 12);
+        addWeightShortcuts(panel);
         space(panel, 15);
-        frameLabel = label(panel, "WT020.000KG ", 15, TEAL, Gravity.CENTER);
+        frameLabel = null; // Keep 12-byte Bluetooth packet; hide technical TX details from UI.
         weightEdit.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) { }
@@ -336,9 +489,60 @@ public class MainActivity extends Activity {
             if (transport != null) transport.stopSending();
         });
         space(content, 20);
-        label(content, "Classic Bluetooth SPP   •   Up to 2 receivers", 12, MUTED, Gravity.CENTER);
+        action(content, "FLOATING JG CONTROLS", FIELD, WHITE, this::enableFloatingControls);
+        space(content, 12);
+        label(content, "KEY EXPIRES: " + (expiry.isEmpty() ? "Not specified" : expiry),
+                13, MUTED, Gravity.CENTER);
         setContentView(scroll(content));
         ensureBluetooth();
+    }
+
+    private void enableFloatingControls() {
+        if (!licensed || kantaService == null) return;
+        if (!Settings.canDrawOverlays(this)) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Floating JG controls")
+                    .setMessage("Allow Display over other apps so JG controls can be used while you open WhatsApp and other apps.")
+                    .setNegativeButton("NOT NOW", null)
+                    .setPositiveButton("OPEN SETTINGS", (dialog, which) -> {
+                        Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:" + getPackageName()));
+                        try { startActivity(i); } catch (Exception ex) { toast("Enable overlay in phone settings."); }
+                    }).show();
+            return;
+        }
+        kantaService.enableFloatingControls();
+        toast("Floating JG enabled. Open another app to see controls.");
+    }
+
+    private void addWeightShortcuts(LinearLayout parent) {
+        final String[] shortcuts = {"5", "10", "15", "20", "25", "30", "35", "40", "45", "50"};
+        for (int row = 0; row < 2; row++) {
+            LinearLayout line = horizontal();
+            parent.addView(line, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+            for (int column = 0; column < 5; column++) {
+                final String weight = shortcuts[row * 5 + column];
+                Button choice = new Button(this);
+                choice.setText(weight);
+                choice.setAllCaps(false);
+                choice.setTextSize(14);
+                choice.setTextColor(WHITE);
+                choice.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+                choice.setMinWidth(0);
+                choice.setMinimumWidth(0);
+                choice.setPadding(0, 0, 0, 0);
+                choice.setBackground(shape(FIELD, Color.rgb(53, 71, 96)));
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(42), 1f);
+                params.setMargins(dp(2), 0, dp(2), 0);
+                line.addView(choice, params);
+                choice.setOnClickListener(v -> {
+                    weightEdit.setText(weight);
+                    weightEdit.setSelection(weightEdit.getText().length());
+                });
+            }
+            if (row == 0) space(parent, 5);
+        }
     }
 
     private void updateWeight(String value) {
@@ -359,9 +563,9 @@ public class MainActivity extends Activity {
     private void openPinPrompt() {
         if (!licensed) return;
         EditText pin = new EditText(this);
-        pin.setHint("4-digit PIN");
+        pin.setHint("8-digit PIN");
         pin.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        pin.setFilters(new InputFilter[]{new InputFilter.LengthFilter(4)});
+        pin.setFilters(new InputFilter[]{new InputFilter.LengthFilter(8)});
         pin.setPadding(dp(20), dp(18), dp(20), dp(18));
         new AlertDialog.Builder(this)
                 .setTitle("Settings locked")
@@ -369,7 +573,7 @@ public class MainActivity extends Activity {
                 .setView(pin)
                 .setNegativeButton("CANCEL", null)
                 .setPositiveButton("UNLOCK", (dialog, which) -> {
-                    if ("1234".equals(pin.getText().toString())) showSettings();
+                    if ("18360100".equals(pin.getText().toString())) showSettings();
                     else toast("Wrong settings password");
                 }).show();
     }
@@ -468,6 +672,7 @@ public class MainActivity extends Activity {
             licenseStore.clear();
             activeKey = null;
             licensed = false;
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             stopTransport();
             showLogin(null);
         });
@@ -592,6 +797,10 @@ public class MainActivity extends Activity {
         super.onRequestPermissionsResult(code, requested, results);
         if (code == RC_BLUETOOTH) {
             toast(allowedConnect() && allowedAdvertise() ? "Bluetooth permission granted" : "Allow Nearby devices permission");
+            if (licensed && !boundToService && kantaService == null) {
+                if (allowedConnect()) bindToKanta();
+                else showBlocked("Nearby devices permission is required for Bluetooth service.", activeKey);
+            }
             if (settingsShowing) { refreshDeviceName(); populatePaired(); }
         }
     }
