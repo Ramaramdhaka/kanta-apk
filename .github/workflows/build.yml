@@ -163,8 +163,35 @@ jobs:
           fi
           echo 'Release APK is free from META-INF/version-control-info.textproto'
 
+      - name: Validate Firebase config and private license hash salt
+        id: firebase_config
+        shell: bash
+        env:
+          HASH_SALT: ${{ secrets.JG_LICENSE_HASH_SALT }}
+        run: |
+          set -euo pipefail
+          if [[ "$HASH_SALT" =~ ^[A-Za-z0-9_-]{24,128}$ ]] && \
+             python3 - <<'PY'
+          import json
+          from pathlib import Path
+          src = json.loads(Path("app/google-services.json").read_text())
+          clients = src["client"]
+          c = next(c for c in clients if c["client_info"]["android_client_info"]["package_name"] == "com.example.bluetoothkanta")
+          assert c["client_info"]["mobilesdk_app_id"].startswith("1:")
+          assert c["client_info"]["mobilesdk_app_id"].split(":")[2] == "android"
+          assert src["project_info"]["project_id"] == "apk-license"
+          assert c["api_key"][0]["current_key"]
+          print("Firebase Android config validated; salt value not displayed.")
+          PY
+          then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'Firebase config or private salt missing/invalid; no signed artifact will be uploaded.'
+          fi
+
       - name: Upload signed release APK when signing and Firebase config are ready
-        if: steps.signing.outputs.ready == 'true' && env.JG_FIREBASE_API_KEY != '' && env.JG_FIREBASE_APP_ID != '' && env.JG_FIREBASE_PROJECT_ID != '' && env.JG_LICENSE_HASH_SALT != ''
+        if: steps.signing.outputs.ready == 'true' && steps.firebase_config.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: JG-Kanta-signed-release-APK
