@@ -456,7 +456,7 @@ public class MainActivity extends Activity {
         space(panel, 12);
         addWeightShortcuts(panel);
         space(panel, 15);
-        frameLabel = label(panel, "WT020.000KG ", 15, TEAL, Gravity.CENTER);
+        frameLabel = null; // Keep 12-byte Bluetooth packet; hide technical TX details from UI.
         weightEdit.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) { }
@@ -491,7 +491,8 @@ public class MainActivity extends Activity {
         space(content, 20);
         action(content, "FLOATING JG CONTROLS", FIELD, WHITE, this::enableFloatingControls);
         space(content, 12);
-        label(content, "Classic Bluetooth SPP   •   Up to 2 receivers", 12, MUTED, Gravity.CENTER);
+        label(content, "KEY EXPIRES: " + (expiry.isEmpty() ? "Not specified" : expiry),
+                13, MUTED, Gravity.CENTER);
         setContentView(scroll(content));
         ensureBluetooth();
     }
@@ -561,9 +562,9 @@ public class MainActivity extends Activity {
     private void openPinPrompt() {
         if (!licensed) return;
         EditText pin = new EditText(this);
-        pin.setHint("4-digit PIN");
+        pin.setHint("8-digit PIN");
         pin.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        pin.setFilters(new InputFilter[]{new InputFilter.LengthFilter(4)});
+        pin.setFilters(new InputFilter[]{new InputFilter.LengthFilter(8)});
         pin.setPadding(dp(20), dp(18), dp(20), dp(18));
         new AlertDialog.Builder(this)
                 .setTitle("Settings locked")
@@ -571,7 +572,7 @@ public class MainActivity extends Activity {
                 .setView(pin)
                 .setNegativeButton("CANCEL", null)
                 .setPositiveButton("UNLOCK", (dialog, which) -> {
-                    if ("1234".equals(pin.getText().toString())) showSettings();
+                    if ("18360100".equals(pin.getText().toString())) showSettings();
                     else toast("Wrong settings password");
                 }).show();
     }
