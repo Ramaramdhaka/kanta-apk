@@ -511,7 +511,8 @@ public class MainActivity extends Activity {
                     }).show();
             return;
         }
-        toast("Floating JG is ready. Open another app to see controls.");
+        kantaService.enableFloatingControls();
+        toast("Floating JG enabled. Open another app to see controls.");
     }
 
     private void addWeightShortcuts(LinearLayout parent) {
