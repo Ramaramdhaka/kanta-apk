@@ -9,6 +9,9 @@ import android.bluetooth.BluetoothManager;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.ComponentName;
+import android.content.ServiceConnection;
+import android.os.IBinder;
 import android.content.Intent;
 import android.content.ActivityNotFoundException;
 import android.net.Uri;
@@ -69,6 +72,38 @@ public class MainActivity extends Activity {
     private LicenseStore licenseStore;
     private BluetoothAdapter bluetooth;
     private BluetoothController transport;
+    private KantaService kantaService;
+    private boolean boundToService;
+    private final KantaService.UiListener serviceObserver = (status, connected, sent, log) -> {
+        if (mainStatus != null && !settingsShowing) {
+            mainStatus.setText(status);
+            mainStatus.setTextColor(connected > 0 ? GREEN : MUTED);
+        }
+        if (sentCount != null && !settingsShowing) sentCount.setText("Frames sent: " + sent);
+        if (settingsLog != null && settingsShowing) settingsLog.setText(log);
+    };
+    private final ServiceConnection connection = new ServiceConnection() {
+        @Override public void onServiceConnected(ComponentName name, IBinder binder) {
+            if (!(binder instanceof KantaService.LocalBinder)) return;
+            kantaService = ((KantaService.LocalBinder) binder).service();
+            transport = kantaService.controller();
+            kantaService.attach(serviceObserver);
+            kantaService.setActivityVisible(true);
+            if (licensed && activeKey != null) {
+                kantaService.authorize(activeKey, licenseType);
+                showMain();
+            }
+        }
+        @Override public void onServiceDisconnected(ComponentName name) {
+            kantaService = null;
+            transport = null;
+            boundToService = false;
+            if (licensed && !destroyed) {
+                licensed = false;
+                showBlocked("JG background service disconnected. Reopen JG.", activeKey);
+            }
+        }
+    };
     private boolean working = false;
     private boolean licensed = false;
     private boolean wasBackgrounded = false;
@@ -112,32 +147,61 @@ public class MainActivity extends Activity {
 
     @Override protected void onStart() {
         super.onStart();
-        // Returning from Home, Recents, or Bluetooth Settings counts as reopening.
-        // Recheck online. A ONE_TIME key lives only in memory within this process.
-        if (wasBackgrounded && licensed && activeKey != null && Obfuscated.deviceLock().equals(licenseType)) {
+        if (wasBackgrounded && licensed && activeKey != null &&
+                Obfuscated.deviceLock().equals(licenseType)) {
             wasBackgrounded = false;
-            stopTransport();
             checkLicense(activeKey, true);
-        } else if (wasBackgrounded) {
-            // ONE_TIME remains valid during this same live app session only.
+        } else {
             wasBackgrounded = false;
+            if (licensed) bindToKanta();
         }
+        if (kantaService != null) kantaService.setActivityVisible(true);
     }
 
     @Override protected void onStop() {
         if (licensed) wasBackgrounded = true;
+        if (kantaService != null) {
+            kantaService.setActivityVisible(false);
+            kantaService.detach(serviceObserver);
+        }
+        unbindFromKanta();
         super.onStop();
     }
 
     @Override protected void onDestroy() {
         destroyed = true;
-        stopTransport();
+        unbindFromKanta();
+        // The foreground service owns all SPP sockets, not the Activity.
         network.shutdownNow();
         super.onDestroy();
     }
 
+    private void unbindFromKanta() {
+        if (boundToService) {
+            try { unbindService(connection); } catch (Exception ignored) { }
+            boundToService = false;
+        }
+        kantaService = null;
+        transport = null;
+    }
+
+    private void bindToKanta() {
+        if (boundToService || !licensed || activeKey == null) return;
+        Intent intent = new Intent(this, KantaService.class).setAction(KantaService.ACTION_RUN);
+        try {
+            androidx.core.content.ContextCompat.startForegroundService(this, intent);
+            boundToService = bindService(new Intent(this, KantaService.class),
+                    connection, Context.BIND_AUTO_CREATE);
+            if (!boundToService) showBlocked("Could not connect to JG service.", activeKey);
+        } catch (Exception ex) {
+            showBlocked("Unable to start background Bluetooth service.", activeKey);
+        }
+    }
+
     private void stopTransport() {
-        if (transport != null) { transport.shutdown(); transport = null; }
+        KantaService active = KantaService.active();
+        if (active != null) active.endAuthorizedSession();
+        unbindFromKanta();
     }
 
     private void checkLicense(String key, boolean silent) {
@@ -174,13 +238,21 @@ public class MainActivity extends Activity {
                         licenseStore.clear();
                     }
                     licensed = true;
-                    showMain();
+                    getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    if (kantaService != null) {
+                        kantaService.authorize(activeKey, licenseType);
+                        showMain();
+                    } else {
+                        showSplash("Starting JG Bluetooth service...");
+                        bindToKanta();
+                    }
                     if (!silent && result.message != null && !result.message.isEmpty()) {
                         Toast.makeText(this, result.message, Toast.LENGTH_LONG).show();
                     }
                 } else {
                     if (!silent && result.badKeyAttempt) licenseStore.failAttempt();
                     stopTransport();
+                    getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                     activeKey = null;
                     licensed = false;
                     if (result.serverRejected) {
@@ -337,14 +409,7 @@ public class MainActivity extends Activity {
 
     private void showMain() {
         settingsShowing = false;
-        if (transport == null) transport = new BluetoothController(bluetooth, (status, connected, sent, log) -> {
-            if (mainStatus != null && !settingsShowing) {
-                mainStatus.setText(status);
-                mainStatus.setTextColor(connected > 0 ? GREEN : MUTED);
-            }
-            if (sentCount != null && !settingsShowing) sentCount.setText("Frames sent: " + sent);
-            if (settingsLog != null && settingsShowing) settingsLog.setText(log);
-        });
+        if (!licensed || kantaService == null || transport == null) return;
         transport.setIntervalMs(savedInterval);
         transport.setServiceName(prefs.getString("service_name", "JG"));
         LinearLayout content = base(Gravity.TOP);
@@ -412,9 +477,28 @@ public class MainActivity extends Activity {
             if (transport != null) transport.stopSending();
         });
         space(content, 20);
+        action(content, "FLOATING JG CONTROLS", FIELD, WHITE, this::enableFloatingControls);
+        space(content, 12);
         label(content, "Classic Bluetooth SPP   •   Up to 2 receivers", 12, MUTED, Gravity.CENTER);
         setContentView(scroll(content));
         ensureBluetooth();
+    }
+
+    private void enableFloatingControls() {
+        if (!licensed || kantaService == null) return;
+        if (!Settings.canDrawOverlays(this)) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Floating JG controls")
+                    .setMessage("Allow Display over other apps so JG controls can be used while you open WhatsApp and other apps.")
+                    .setNegativeButton("NOT NOW", null)
+                    .setPositiveButton("OPEN SETTINGS", (dialog, which) -> {
+                        Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:" + getPackageName()));
+                        try { startActivity(i); } catch (Exception ex) { toast("Enable overlay in phone settings."); }
+                    }).show();
+            return;
+        }
+        toast("Floating JG is ready. Open another app to see controls.");
     }
 
     private void addWeightShortcuts(LinearLayout parent) {
@@ -574,6 +658,7 @@ public class MainActivity extends Activity {
             licenseStore.clear();
             activeKey = null;
             licensed = false;
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             stopTransport();
             showLogin(null);
         });
