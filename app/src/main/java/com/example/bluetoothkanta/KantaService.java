@@ -50,6 +50,7 @@ public final class KantaService extends Service {
     static final String ACTION_STOP = "com.example.bluetoothkanta.STOP_SERVICE";
     private static final String CHANNEL = "jg_bluetooth_foreground";
     private static final int NOTIFICATION_ID = 2118;
+    private static final String FLOATING_ENABLED = "floating_controls_enabled";
     private static final int BG = Color.rgb(9, 17, 30);
     private static final int PANEL = Color.rgb(19, 31, 49);
     private static final int FIELD = Color.rgb(30, 47, 69);
@@ -178,6 +179,17 @@ public final class KantaService extends Service {
         else showOverlay();
     }
 
+    // Only hides/shows the floating panel. Bluetooth and foreground service keep running.
+    void enableFloatingControls() {
+        prefs.edit().putBoolean(FLOATING_ENABLED, true).apply();
+        if (!activityVisible) showOverlay();
+    }
+
+    private void closeFloatingControls() {
+        prefs.edit().putBoolean(FLOATING_ENABLED, false).apply();
+        hideOverlay();
+    }
+
     void authorize(String key, String type) {
         if (key == null || !key.matches("[0-9]{8}")) return;
         authorized = true;
@@ -282,7 +294,8 @@ public final class KantaService extends Service {
     }
 
     private void showOverlay() {
-        if (activityVisible || !authorized || bubble != null || !Settings.canDrawOverlays(this)) return;
+        if (activityVisible || !authorized || bubble != null ||
+                !prefs.getBoolean(FLOATING_ENABLED, true) || !Settings.canDrawOverlays(this)) return;
         try {
             manager = (WindowManager) getSystemService(WINDOW_SERVICE);
             if (manager == null) return;
@@ -344,10 +357,16 @@ public final class KantaService extends Service {
             expandedArea.setVisibility(bubbleCollapsed ? View.GONE : View.VISIBLE);
             fold.setText(bubbleCollapsed ? "+" : "−");
             if (bubbleParams != null && manager != null) {
-                bubbleParams.width = dp(bubbleCollapsed ? 156 : 314);
+                bubbleParams.width = dp(bubbleCollapsed ? 224 : 314);
                 manager.updateViewLayout(bubble, bubbleParams);
             }
         });
+        Button close = button("✕", FIELD, WHITE);
+        close.setContentDescription("Close floating controls without stopping Bluetooth");
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(dp(40), dp(38));
+        cp.leftMargin = dp(5);
+        header.addView(close, cp);
+        close.setOnClickListener(v -> closeFloatingControls());
         title.setOnTouchListener(new View.OnTouchListener() {
             private float downX, downY;
             private int startX, startY;
