@@ -201,7 +201,7 @@ public class MainActivity extends Activity {
         if (boundToService || !licensed || activeKey == null) return;
         Intent intent = new Intent(this, KantaService.class).setAction(KantaService.ACTION_RUN);
         try {
-            androidx.core.content.ContextCompat.startForegroundService(this, intent);
+            startForegroundService(intent);
             boundToService = bindService(new Intent(this, KantaService.class),
                     connection, Context.BIND_AUTO_CREATE);
             if (!boundToService) showBlocked("Could not connect to JG service.", activeKey);
