@@ -6,7 +6,7 @@
 
 **Why 401 happens:** The admin can sign in and see legacy `/keys`, but the live Realtime Database Rules do not yet grant this admin write access under `/licenses`. No JavaScript change can override live database rules.
 
-**Fix:** If intentionally retiring all old licenses, open Firebase Console > Realtime Database > Rules, replace the existing rules with the final reviewed `database.rules.json` in this same branch, and press Publish. Admin access is bound to the existing UID and email. This immediately revokes old APK reads/claims; preserve the exported backup first. Do not press App Check Enforce; it remains Monitoring until web attestation is configured.
+**Safest test-first fix:** Open Firebase Console > Realtime Database > Rules, replace the existing rules with the reviewed `database.rules.migration.json` in this same branch, and press Publish. This grants the verified admin access under `/licenses` for new hashed key creation while temporarily preserving old APK `/keys` access for phone testing. App Check remains Monitoring (do NOT press Enforce). After the new signed APK and new key work, publish `database.rules.json` as the final cutover; this revokes legacy client access. Keep the existing backup. Publishing rules is a live security-sensitive operation: inspect the whole file before Publish.
 
 **Domain and deployment:** The admin site shown by the owner is `https://jglegha.online/admin.html`. The GitHub source file and hosted website are distinct. After updating code in the security branch, deploy/copy the newest `admin.html` to the actual hosting serving `jglegha.online`. A browser hard reload alone cannot deploy GitHub changes. Do not deploy it publicly with a plaintext salt or credentials.
 
