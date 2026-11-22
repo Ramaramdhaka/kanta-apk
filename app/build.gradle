@@ -1,3 +1,5 @@
+import groovy.json.JsonSlurper
+
 plugins {
     id 'com.android.application'
 }
@@ -10,10 +12,19 @@ android {
         includeInApk = false
         includeInBundle = false
     }
+    // google-services.json is Firebase PUBLIC app configuration, not a secret.
+    // This app builds FirebaseOptions directly, so no google-services Gradle plugin is needed.
+    def firebaseConfig = new JsonSlurper().parse(file('google-services.json'))
+    def matchingClient = firebaseConfig.client.find {
+        it.client_info.android_client_info.package_name == 'com.example.bluetoothkanta'
+    }
+    if (matchingClient == null) {
+        throw new GradleException('Firebase Android package com.example.bluetoothkanta not found')
+    }
     def securityValues = [
-        FIREBASE_API_KEY: System.getenv('JG_FIREBASE_API_KEY') ?: '',
-        FIREBASE_APP_ID: System.getenv('JG_FIREBASE_APP_ID') ?: '',
-        FIREBASE_PROJECT_ID: System.getenv('JG_FIREBASE_PROJECT_ID') ?: '',
+        FIREBASE_API_KEY: System.getenv('JG_FIREBASE_API_KEY') ?: matchingClient.api_key[0].current_key,
+        FIREBASE_APP_ID: System.getenv('JG_FIREBASE_APP_ID') ?: matchingClient.client_info.mobilesdk_app_id,
+        FIREBASE_PROJECT_ID: System.getenv('JG_FIREBASE_PROJECT_ID') ?: firebaseConfig.project_info.project_id,
         LICENSE_HASH_SALT: System.getenv('JG_LICENSE_HASH_SALT') ?: ''
     ]
     defaultConfig {
