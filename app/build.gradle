@@ -10,10 +10,6 @@ android {
         includeInApk = false
         includeInBundle = false
     }
-    vcsInfo {
-        include = false
-    }
-
     def securityValues = [
         FIREBASE_API_KEY: System.getenv('JG_FIREBASE_API_KEY') ?: '',
         FIREBASE_APP_ID: System.getenv('JG_FIREBASE_APP_ID') ?: '',
@@ -58,6 +54,7 @@ android {
             buildConfigField 'String', 'EXPECTED_SIGNATURE_SHA256', '"PASTE_RELEASE_SHA256_HERE"'
         }
         release {
+            vcsInfo { include = false }
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
