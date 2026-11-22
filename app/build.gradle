@@ -6,12 +6,32 @@ android {
     namespace 'com.example.bluetoothkanta'
     compileSdk 35
 
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+    vcsInfo {
+        include = false
+    }
+
+    def securityValues = [
+        FIREBASE_API_KEY: System.getenv('JG_FIREBASE_API_KEY') ?: '',
+        FIREBASE_APP_ID: System.getenv('JG_FIREBASE_APP_ID') ?: '',
+        FIREBASE_PROJECT_ID: System.getenv('JG_FIREBASE_PROJECT_ID') ?: '',
+        LICENSE_HASH_SALT: System.getenv('JG_LICENSE_HASH_SALT') ?: ''
+    ]
     defaultConfig {
         applicationId 'com.example.bluetoothkanta'
         minSdk 26
         targetSdk 35
-        versionCode 10
-        versionName '9.1-JG-Floating'
+        versionCode 11
+        versionName '9.2-JG-Security-Preview'
+        securityValues.each { fieldName, fieldValue ->
+            if (!fieldValue.matches('[a-zA-Z0-9_:.\\-]*')) {
+                throw new GradleException('Invalid Firebase build config value for ' + fieldName)
+            }
+            buildConfigField 'String', fieldName, '\"' + fieldValue + '\"'
+        }
 
     }
     compileOptions {
@@ -54,4 +74,7 @@ dependencies {
     implementation 'androidx.security:security-crypto:1.1.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'com.google.errorprone:error_prone_annotations:2.36.0'
+    implementation platform('com.google.firebase:firebase-bom:34.15.0')
+    implementation 'com.google.firebase:firebase-auth'
+    implementation 'com.google.firebase:firebase-appcheck-playintegrity'
 }

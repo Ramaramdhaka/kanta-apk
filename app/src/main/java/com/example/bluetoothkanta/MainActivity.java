@@ -127,6 +127,7 @@ public class MainActivity extends Activity {
         getWindow().setNavigationBarColor(BG);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         if (!SecurityGuard.enforce(this)) return;
+        FirebaseLicenseSession.begin(getApplicationContext());
         prefs = getSharedPreferences("jg_ui", MODE_PRIVATE);
         try {
             licenseStore = new LicenseStore(this);

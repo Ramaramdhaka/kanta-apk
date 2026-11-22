@@ -3,7 +3,7 @@ name: Build JG Kanta APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, master, jg-v7-firebase-setup-20261121]
+    branches: [main, master, jg-v7-firebase-setup-20261121, jg-firebase-auth-appcheck-hardening-20261122]
   pull_request:
     branches: [main]
 
@@ -13,6 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      JG_FIREBASE_API_KEY: ${{ vars.JG_FIREBASE_API_KEY }}
+      JG_FIREBASE_APP_ID: ${{ vars.JG_FIREBASE_APP_ID }}
+      JG_FIREBASE_PROJECT_ID: ${{ vars.JG_FIREBASE_PROJECT_ID }}
+      JG_LICENSE_HASH_SALT: ${{ secrets.JG_LICENSE_HASH_SALT }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -146,8 +151,8 @@ jobs:
           fi
           gradle --no-daemon --stacktrace :app:assembleRelease
 
-      - name: Upload signed release APK when signing configured
-        if: steps.signing.outputs.ready == 'true'
+      - name: Upload signed release APK when signing and Firebase config are ready
+        if: steps.signing.outputs.ready == 'true' && env.JG_FIREBASE_API_KEY != '' && env.JG_FIREBASE_APP_ID != '' && env.JG_FIREBASE_PROJECT_ID != '' && env.JG_LICENSE_HASH_SALT != ''
         uses: actions/upload-artifact@v4
         with:
           name: JG-Kanta-signed-release-APK
