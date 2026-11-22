@@ -10,13 +10,15 @@ import com.google.firebase.appcheck.FirebaseAppCheck;
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory;
 import com.google.firebase.auth.AuthResult;
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseAuthException;
+import android.util.Log;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.GetTokenResult;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.Locale;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -29,6 +31,7 @@ import java.util.concurrent.TimeUnit;
 final class FirebaseLicenseSession {
     private static boolean initialized;
     private static Task<AuthResult> signInTask;
+    private static String initializationFailure = "";
 
     private FirebaseLicenseSession() { }
 
@@ -41,19 +44,46 @@ final class FirebaseLicenseSession {
                     .setProjectId(BuildConfig.FIREBASE_PROJECT_ID)
                     .setDatabaseUrl(Obfuscated.baseUrl())
                     .build();
-            if (FirebaseApp.getApps(context).isEmpty()) {
-                FirebaseApp.initializeApp(context.getApplicationContext(), options);
+            FirebaseApp app;
+            try {
+                app = FirebaseApp.getInstance();
+            } catch (IllegalStateException noDefaultApp) {
+                app = FirebaseApp.initializeApp(context.getApplicationContext(), options);
             }
-            FirebaseAppCheck.getInstance()
-                    .installAppCheckProviderFactory(PlayIntegrityAppCheckProviderFactory.getInstance());
+            if (!BuildConfig.FIREBASE_APP_ID.equals(app.getOptions().getApplicationId())) {
+                throw new IllegalStateException("Default Firebase app config mismatch");
+            }
+
+            try {
+                FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+                        PlayIntegrityAppCheckProviderFactory.getInstance());
+            } catch (RuntimeException checkError) {
+                // During App Check Monitoring, an attestation outage must not block Auth.
+                Log.w("JG-AppCheck", "Provider unavailable during monitoring", checkError);
+            }
+
+            FirebaseAuth auth = FirebaseAuth.getInstance(app);
             initialized = true;
-            if (FirebaseAuth.getInstance().getCurrentUser() == null) {
-                // Called at startup. The verifier waits for this Task before any DB request.
-                signInTask = FirebaseAuth.getInstance().signInAnonymously();
+            initializationFailure = "";
+            if (auth.getCurrentUser() == null) {
+                signInTask = auth.signInAnonymously();
             }
-        } catch (RuntimeException exception) {
+        } catch (RuntimeException error) {
             initialized = false;
+            initializationFailure = shortError(error);
+            Log.e("JG-Firebase", "Firebase initialization failed", error);
         }
+    }
+
+    private static String shortError(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof FirebaseAuthException) {
+                return ((FirebaseAuthException) cause).getErrorCode();
+            }
+            if (cause instanceof TimeoutException) return "TIMEOUT";
+            if (cause instanceof java.net.UnknownHostException) return "NO_INTERNET";
+        }
+        return error == null ? "UNKNOWN" : error.getClass().getSimpleName();
     }
 
     private static boolean configured() {
@@ -77,32 +107,59 @@ final class FirebaseLicenseSession {
     }
 
     static Credentials credentials(Context context) throws Exception {
-        begin(context);
-        if (!initialized || !configured()) {
-            throw new IOException("Firebase app configuration missing.");
+        if (!configured()) {
+            throw new IOException("Firebase Android app config missing.");
         }
+        begin(context);
+        if (!initialized) {
+            throw new IOException("Firebase initialization failed [" + initializationFailure + "]");
+        }
+
         FirebaseAuth auth = FirebaseAuth.getInstance();
         FirebaseUser user = auth.getCurrentUser();
         if (user == null) {
-            Task<AuthResult> pending;
+            final Task<AuthResult> pending;
             synchronized (FirebaseLicenseSession.class) {
                 if (signInTask == null || signInTask.isCanceled() || signInTask.isComplete()) {
                     signInTask = auth.signInAnonymously();
                 }
                 pending = signInTask;
             }
-            AuthResult result = Tasks.await(pending, 20, TimeUnit.SECONDS);
-            user = result == null ? null : result.getUser();
+            try {
+                AuthResult result = Tasks.await(pending, 20, TimeUnit.SECONDS);
+                user = result == null ? null : result.getUser();
+            } catch (Exception error) {
+                Log.w("JG-Firebase", "Anonymous sign-in failed", error);
+                throw new IOException("Anonymous sign-in failed [" + shortError(error) + "]", error);
+            }
         }
-        if (user == null) throw new IOException("Anonymous sign-in did not return a user.");
-        GetTokenResult id = Tasks.await(user.getIdToken(false), 15, TimeUnit.SECONDS);
-        AppCheckToken appCheck = Tasks.await(
-                FirebaseAppCheck.getInstance().getAppCheckToken(false), 20, TimeUnit.SECONDS);
-        if (id == null || id.getToken() == null || id.getToken().isEmpty() ||
-                appCheck == null || appCheck.getToken() == null || appCheck.getToken().isEmpty()) {
-            throw new IOException("Firebase Auth or App Check token missing.");
+        if (user == null) throw new IOException("Firebase anonymous account missing.");
+
+        final String idToken;
+        try {
+            GetTokenResult id = Tasks.await(user.getIdToken(false), 15, TimeUnit.SECONDS);
+            idToken = id == null ? null : id.getToken();
+        } catch (Exception error) {
+            Log.w("JG-Firebase", "Auth ID token unavailable", error);
+            throw new IOException("Firebase ID token failed [" + shortError(error) + "]", error);
         }
-        return new Credentials(user.getUid(), id.getToken(), appCheck.getToken());
+        if (idToken == null || idToken.isEmpty()) {
+            throw new IOException("Firebase ID token missing.");
+        }
+
+        String appCheckToken = "";
+        try {
+            AppCheckToken attestation = Tasks.await(
+                    FirebaseAppCheck.getInstance().getAppCheckToken(false), 8, TimeUnit.SECONDS);
+            if (attestation != null && attestation.getToken() != null) {
+                appCheckToken = attestation.getToken();
+            }
+        } catch (Exception error) {
+            // This exception is allowed ONLY while RTDB App Check remains in Monitoring.
+            // With enforcement enabled Firebase rejects unverified requests server-side.
+            Log.w("JG-AppCheck", "Attestation unavailable, Auth-only request during Monitoring", error);
+        }
+        return new Credentials(user.getUid(), idToken, appCheckToken);
     }
 
     static String hashedKey(String key) throws Exception {
