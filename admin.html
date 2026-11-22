@@ -147,9 +147,9 @@
   const PROJECT_ID = "apk-license";
   const ADMIN_UID = "QFhyikjUbYZ3eL3I1QQh0CHYfJR2";
   // Required ONLY before Firebase App Check enforcement on RTDB:
-  // Register a Firebase WEB app and reCAPTCHA v3 App Check for this admin site's HTTPS domain.
+  // Register a Firebase WEB app and reCAPTCHA Enterprise/Fraud Defense score-based key for this admin site's HTTPS domain.
   const WEB_APP_ID = "1:147990234609:web:8793da71487776f7517050"; // Firebase Console > Project settings > Web app > App ID
-  const RECAPTCHA_V3_SITE_KEY = ""; // public reCAPTCHA v3 site key
+  const RECAPTCHA_ENTERPRISE_SITE_KEY = ""; // public Google Cloud Fraud Defense Website score-based site key
 
   let idToken = "";
   let refreshToken = "";
@@ -204,18 +204,18 @@
   }
 
   async function webAppCheckToken() {
-    if (!WEB_APP_ID || !RECAPTCHA_V3_SITE_KEY) return "";
+    if (!WEB_APP_ID || !RECAPTCHA_ENTERPRISE_SITE_KEY) return "";
     if (!appCheckPromise) {
       appCheckPromise = (async () => {
         const { initializeApp } = await import("https://www.gstatic.com/firebasejs/13.3.0/firebase-app.js");
-        const { initializeAppCheck, ReCaptchaV3Provider, getToken } =
+        const { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken } =
           await import("https://www.gstatic.com/firebasejs/13.3.0/firebase-app-check.js");
         const app = initializeApp(
           { apiKey: API_KEY, projectId: PROJECT_ID, appId: WEB_APP_ID },
           "jg-admin-app-check"
         );
         const appCheck = initializeAppCheck(app, {
-          provider: new ReCaptchaV3Provider(RECAPTCHA_V3_SITE_KEY),
+          provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_ENTERPRISE_SITE_KEY),
           isTokenAutoRefreshEnabled: true
         });
         return async () => (await getToken(appCheck, false)).token;
