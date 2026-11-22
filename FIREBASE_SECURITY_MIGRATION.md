@@ -2,6 +2,33 @@
 
 **Do not merge to main, publish new database rules, or distribute the new APK until every item below is complete.** The previous app uses plaintext /keys/12345678, while this preview reads /licenses/<sha256hex> and REQUIRES both an anonymous Firebase Authentication user and an App Check token. The live database has not been altered by these commits. No existing Bluetooth/UI/EncryptedSharedPreferences/ProGuard settings were changed.
 
+
+## Admin panel — uploaded admin.html updated
+
+The original admin panel provided by the project owner has now been adapted in this branch and saved as **admin.html**. It retains the original visual layout and login and adds one salt input plus the explicit **Copy eligible old keys** button. Its existing Firebase Web API key is reused as *public client configuration*; no password or private key is stored in the HTML.
+
+- Sign in with the actual Firebase Authentication admin account (verified against the known admin UID).
+- Enter the **same** salt configured as GitHub Secret \`JG_LICENSE_HASH_SALT\`. The browser keeps the salt in the input during the current session only, without localStorage/cookies.
+- **Generate** now creates cryptographically random 8-digit numbers, stores only \`licenses/<hash>\`, initializes \`claimed:false\`, \`uid:""\`, \`deviceId:""\` and preserves status/type/expiry/customer. Collision writes use Firebase \`If-Match: null_etag\`.
+- New plaintext numbers are shown in the creation dialog, and remain in memory for Copy until the page closes. Existing hashes cannot be converted back to an 8-digit number. Search for an exact 8-digit number with the salt to match its hash.
+- The panel can list both hashed \`licenses\` and old \`keys\`. **Copy eligible old keys** copies unclaimed \`ACTIVE\` or \`HOLD\` keys to the new hashed path *without deleting or changing* the originals. Already-bound, \`USED\` and malformed entries are skipped and need a customer reissue plan.
+- Existing Hold/Activate, Reset Device and Delete actions work on the matching collection; these actions still require the admin account. Input values are inserted with \`textContent\` instead of HTML interpolation to avoid customer-name XSS.
+- Auth ID tokens refresh automatically. After RTDB App Check enforcement, the web panel requires a registered Firebase **Web app**, its \`WEB_APP_ID\`, its \`RECAPTCHA_V3_SITE_KEY\`, and the hosting domain allowed by reCAPTCHA. Those are **web App Check** settings; the Android phone uses Play Integrity.
+- Host the panel from **HTTPS or localhost** for Web Crypto SHA-256 and App Check. Opening \`file://\` directly is not supported for hashed key generation.
+
+### Safe staged rollout: old APK can keep working during migration
+
+1. Back up the entire Realtime Database first (Firebase Console export; preserve it offline).
+2. Confirm the actual admin Firebase Authentication **email**, ensure it is verified, and replace the \`REPLACE_WITH_ADMIN_EMAIL@example.com\` placeholder in both **database.rules.migration.json** and **database.rules.json**.
+3. Enable Anonymous Authentication in Firebase Console. Register Android and web App Check providers, but **do not enforce** Realtime Database App Check yet.
+4. Publish **database.rules.migration.json** first, after carefully checking its content: this *temporarily retains the old public /keys direct-access rules* while creating the new authenticated /licenses branch. Old APKs continue to work, but the known public-access risk remains during the transition.
+5. Open the updated HTTPS **admin.html**, sign in, enter the same salt as Android, and click **Copy eligible old keys**. The action never deletes old records and reports copied, existing and failed counts.
+6. Verify each migrated license under \`/licenses/<sha256>\` and test an Android build with GitHub Firebase configuration. Already-bound legacy users cannot be silently migrated to anonymous UID ownership; handle them with explicit customer reissue/rebind.
+7. Configure web App Check (WEB_APP_ID + RECAPTCHA_V3_SITE_KEY) for the admin page. Once both Android and web clients send valid App Check tokens, test App Check in monitoring mode, then enforce RTDB App Check.
+8. **Only after old customers have upgraded and migrated:** publish final **database.rules.json**, which restricts legacy \`/keys\` to the verified admin alone and removes the old anonymous grant. Keep an offline backup; do not delete /keys automatically.
+
+Publishing neither rules file from GitHub changes the live Firebase database. An administrator must explicitly review and Publish in Firebase Console.
+
 ## Required Firebase Console configuration (not automated through GitHub)
 
 1. In Firebase Console > Authentication > Sign-in method, **enable Anonymous**. Existing email/password administrator remains separate.
