@@ -1,3 +1,5 @@
+import groovy.json.JsonSlurper
+
 plugins {
     id 'com.android.application'
 }
@@ -6,12 +8,37 @@ android {
     namespace 'com.example.bluetoothkanta'
     compileSdk 35
 
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+    // google-services.json is Firebase PUBLIC app configuration, not a secret.
+    // This app builds FirebaseOptions directly, so no google-services Gradle plugin is needed.
+    def firebaseConfig = new JsonSlurper().parse(file('google-services.json'))
+    def matchingClient = firebaseConfig.client.find {
+        it.client_info.android_client_info.package_name == 'com.example.bluetoothkanta'
+    }
+    if (matchingClient == null) {
+        throw new GradleException('Firebase Android package com.example.bluetoothkanta not found')
+    }
+    def securityValues = [
+        FIREBASE_API_KEY: System.getenv('JG_FIREBASE_API_KEY') ?: matchingClient.api_key[0].current_key,
+        FIREBASE_APP_ID: System.getenv('JG_FIREBASE_APP_ID') ?: matchingClient.client_info.mobilesdk_app_id,
+        FIREBASE_PROJECT_ID: System.getenv('JG_FIREBASE_PROJECT_ID') ?: firebaseConfig.project_info.project_id,
+        LICENSE_HASH_SALT: System.getenv('JG_LICENSE_HASH_SALT') ?: ''
+    ]
     defaultConfig {
         applicationId 'com.example.bluetoothkanta'
         minSdk 26
         targetSdk 35
-        versionCode 10
-        versionName '9.1-JG-Floating'
+        versionCode 13
+        versionName '9.3-JG-Notices'
+        securityValues.each { fieldName, fieldValue ->
+            if (!fieldValue.matches('[a-zA-Z0-9_:.\\-]*')) {
+                throw new GradleException('Invalid Firebase build config value for ' + fieldName)
+            }
+            buildConfigField 'String', fieldName, '\"' + fieldValue + '\"'
+        }
 
     }
     compileOptions {
@@ -38,6 +65,7 @@ android {
             buildConfigField 'String', 'EXPECTED_SIGNATURE_SHA256', '"PASTE_RELEASE_SHA256_HERE"'
         }
         release {
+            vcsInfo { include = false }
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -54,4 +82,7 @@ dependencies {
     implementation 'androidx.security:security-crypto:1.1.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'com.google.errorprone:error_prone_annotations:2.36.0'
+    implementation platform('com.google.firebase:firebase-bom:34.15.0')
+    implementation 'com.google.firebase:firebase-auth'
+    implementation 'com.google.firebase:firebase-appcheck-playintegrity'
 }

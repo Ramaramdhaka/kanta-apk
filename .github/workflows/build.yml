@@ -3,7 +3,7 @@ name: Build JG Kanta APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, master, jg-v7-firebase-setup-20261121]
+    branches: [main, master, jg-v7-firebase-setup-20261121, jg-firebase-auth-appcheck-hardening-20261122]
   pull_request:
     branches: [main]
 
@@ -13,6 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      JG_FIREBASE_API_KEY: ${{ vars.JG_FIREBASE_API_KEY }}
+      JG_FIREBASE_APP_ID: ${{ vars.JG_FIREBASE_APP_ID }}
+      JG_FIREBASE_PROJECT_ID: ${{ vars.JG_FIREBASE_PROJECT_ID }}
+      JG_LICENSE_HASH_SALT: ${{ secrets.JG_LICENSE_HASH_SALT }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -146,11 +151,105 @@ jobs:
           fi
           gradle --no-daemon --stacktrace :app:assembleRelease
 
-      - name: Upload signed release APK when signing configured
-        if: steps.signing.outputs.ready == 'true'
+      - name: Ensure no VCS metadata is included in the release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/release/app-release.apk
+          test -f "$apk"
+          if unzip -Z1 "$apk" | grep -Fxq 'META-INF/version-control-info.textproto'; then
+            echo 'ERROR: VCS metadata unexpectedly included in release APK'
+            exit 1
+          fi
+          echo 'Release APK is free from META-INF/version-control-info.textproto'
+
+      - name: Validate Firebase config and private license hash salt
+        id: firebase_config
+        shell: bash
+        env:
+          HASH_SALT: ${{ secrets.JG_LICENSE_HASH_SALT }}
+        run: |
+          set -euo pipefail
+          if [[ "$HASH_SALT" =~ ^[A-Za-z0-9_-]{24,128}$ ]] && \
+             python3 - <<'PY'
+          import json
+          from pathlib import Path
+          src = json.loads(Path("app/google-services.json").read_text())
+          clients = src["client"]
+          c = next(c for c in clients if c["client_info"]["android_client_info"]["package_name"] == "com.example.bluetoothkanta")
+          assert c["client_info"]["mobilesdk_app_id"].startswith("1:")
+          assert c["client_info"]["mobilesdk_app_id"].split(":")[2] == "android"
+          assert src["project_info"]["project_id"] == "apk-license"
+          assert c["api_key"][0]["current_key"]
+          print("Firebase Android config validated; salt value not displayed.")
+          PY
+          then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'Firebase config or private salt missing/invalid; no signed artifact will be uploaded.'
+          fi
+
+      - name: Upload signed release APK when signing and Firebase config are ready
+        if: steps.signing.outputs.ready == 'true' && steps.firebase_config.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: JG-Kanta-signed-release-APK
           path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  build-admin:
+    name: Build JG Admin signed release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      JG_LICENSE_HASH_SALT: ${{ secrets.JG_LICENSE_HASH_SALT }}
+      WRAP_SECRET: ${{ secrets.JG_KEYSTORE_WRAP_SECRET }}
+      JG_STORE_PASSWORD: ${{ secrets.JG_RELEASE_STORE_PASSWORD }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Validate JG Admin signing setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$JG_LICENSE_HASH_SALT" =~ ^[A-Za-z0-9_-]{24,128}$ ]] || { echo 'Admin build requires matching license hash salt'; exit 1; }
+          test -f signing/jg-release.p12.gpg
+          test -f signing/jg-release.sha256.txt
+          test -n "$WRAP_SECRET"
+          test -n "$JG_STORE_PASSWORD"
+      - name: Decrypt existing release keystore and pin certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          keypath="$RUNNER_TEMP/jg-admin-release.p12"
+          printf '%s' "$WRAP_SECRET" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
+            --decrypt --output "$keypath" signing/jg-release.p12.gpg
+          actual=$(keytool -list -v -keystore "$keypath" -storetype PKCS12 \
+            -storepass "$JG_STORE_PASSWORD" -alias jg \
+            | awk '/SHA256:/{print $2;exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          test "$actual" = "$(cat signing/jg-release.sha256.txt)" || { echo 'Signing SHA-256 mismatch'; exit 1; }
+          echo "JG_KEYSTORE_PATH=$keypath" >> "$GITHUB_ENV"
+          echo 'JG_KEY_ALIAS=jg' >> "$GITHUB_ENV"
+          echo "JG_KEY_PASSWORD=$JG_STORE_PASSWORD" >> "$GITHUB_ENV"
+      - name: Build JG Admin signed release APK
+        run: gradle --no-daemon --stacktrace :adminapp:assembleRelease
+      - name: Upload JG Admin signed release
+        uses: actions/upload-artifact@v4
+        with:
+          name: JG-Admin-signed-APK
+          path: adminapp/build/outputs/apk/release/adminapp-release.apk
           if-no-files-found: error
           retention-days: 14

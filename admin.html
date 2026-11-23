@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Secure Firebase License Manager</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Poppins', sans-serif; }
+    body {
+      min-height: 100vh;
+      background: linear-gradient(135deg, #e0e7ff 0%, #f3e8ff 50%, #dbeafe 100%);
+      color: #1e293b;
+      padding: 20px;
+    }
+    .glass {
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(30, 41, 59, 0.08);
+    }
+    #loginBox { max-width: 390px; margin: 80px auto; padding: 35px 30px; text-align: center; }
+    .brand {
+      font-size: 24px; font-weight: 700;
+      background: linear-gradient(90deg, #4f46e5, #9333ea);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      margin-bottom: 6px;
+    }
+    .sub { font-size: 13px; color: #64748b; margin-bottom: 24px; }
+    input, select {
+      width: 100%; padding: 11px 14px; margin-bottom: 14px;
+      border: 1px solid #cbd5e1; border-radius: 10px; background: #fff; font-size: 14px; outline: none;
+    }
+    input:focus, select:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
+    .btn { padding: 11px 18px; border: none; border-radius: 10px; font-weight: 600; font-size: 14px; cursor: pointer; transition: 0.2s; }
+    .btn-primary { background: linear-gradient(90deg, #4f46e5, #7c3aed); color: #fff; width: 100%; }
+    .btn-primary:hover { opacity: 0.92; transform: translateY(-1px); }
+    .btn-sm { padding: 6px 10px; font-size: 12px; border-radius: 8px; margin: 2px; }
+    .btn-hold { background: #fef3c7; color: #b45309; }
+    .btn-active { background: #dcfce7; color: #15803d; }
+    .btn-reset { background: #e0f2fe; color: #0369a1; }
+    .btn-del { background: #fee2e2; color: #b91c1c; }
+    .btn-copy { background: #ede9fe; color: #5b21b6; }
+
+    #dashboard { display: none; max-width: 1100px; margin: 0 auto; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; margin-bottom: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+    .stat { padding: 18px 20px; }
+    .stat h4 { font-size: 13px; color: #64748b; font-weight: 500; }
+    .stat p { font-size: 26px; font-weight: 700; color: #1e293b; margin-top: 4px; }
+
+    .gen-card { padding: 22px; margin-bottom: 20px; }
+    .gen-row { display: grid; grid-template-columns: 2fr 1fr 1.5fr 1fr; gap: 12px; align-items: center; }
+    .gen-row input, .gen-row select { margin-bottom: 0; }
+
+    .table-card { padding: 20px; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+    th, td { padding: 12px 10px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+    th { color: #475569; font-weight: 600; background: rgba(241,245,249,0.7); }
+    .badge { padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .b-active { background: #dcfce7; color: #15803d; }
+    .b-hold { background: #fef3c7; color: #b45309; }
+    .b-used { background: #e2e8f0; color: #475569; }
+    .key-code { font-family: monospace; font-weight: 700; font-size: 14px; color: #4338ca; letter-spacing: 1px; }
+
+    @media (max-width: 768px) { .gen-row { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<div id="loginBox" class="glass">
+  <div class="brand">Secure License Admin</div>
+  <div class="sub">Firebase Authenticated Control Panel</div>
+  <input type="email" id="uEmail" placeholder="Admin Email">
+  <input type="password" id="uPass" placeholder="Password">
+  <button class="btn btn-primary" id="loginBtn" onclick="doLogin()">Secure Login</button>
+  <p id="loginMsg" style="color:#dc2626; font-size:13px; margin-top:10px;"></p>
+</div>
+
+<div id="dashboard">
+  <div class="topbar glass">
+    <div>
+      <div class="brand" style="font-size:20px; margin:0;">License Key Manager</div>
+      <span style="font-size:12px; color:#64748b;">Protected by Firebase Auth • 8-Digit Numeric</span>
+    </div>
+    <div>
+      <button class="btn btn-reset btn-sm" onclick="loadKeys()">Refresh</button>
+      <button class="btn btn-del btn-sm" onclick="location.reload()">Logout</button>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="glass stat"><h4>Total Keys</h4><p id="stTotal">0</p></div>
+    <div class="glass stat"><h4>Active Keys</h4><p id="stActive" style="color:#16a34a;">0</p></div>
+    <div class="glass stat"><h4>Hold / Used</h4><p id="stHold" style="color:#d97706;">0</p></div>
+  </div>
+
+  <div class="glass gen-card">
+    <h3 style="margin-bottom:14px; font-size:16px;">Generate 8-Digit Numeric Key</h3>
+    <div class="gen-row">
+      <input type="text" id="custName" placeholder="Customer Name (e.g. Ramesh)">
+      <input type="number" id="validDays" placeholder="Days" value="30">
+      <select id="keyType">
+        <option value="DEVICE_LOCK">Device Lock (1 Mobile)</option>
+        <option value="ONE_TIME">One-Time Use Key</option>
+      </select>
+      <button class="btn btn-primary" id="genBtn" onclick="createKey()">+ Generate</button>
+    </div>
+    <div style="margin-top:14px;">
+      <input id="licenseSalt" type="password" autocomplete="off"
+        placeholder="License hash salt — same as GitHub JG_LICENSE_HASH_SALT" style="margin:0;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:9px;">
+        <button class="btn btn-reset btn-sm" type="button" onclick="rememberSaltSecurely()">Remember Salt on this browser</button>
+        <button class="btn btn-del btn-sm" type="button" onclick="forgetSavedSalt()">Forget saved salt</button>
+      </div>
+      <div id="saltVaultStatus" role="status" style="font-size:11px;color:#64748b;margin-top:7px;">
+        After login, save your salt encrypted on this browser. It can restore automatically next time.
+      </div>
+      <div style="font-size:11px;color:#64748b;margin-top:6px;">
+        Keep a backup in your password manager. Different salt = different license hashes.
+      </div>
+    </div>
+  </div>
+
+  <div class="glass table-card">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <h3 style="font-size:16px;">All Generated Keys</h3>
+      <input type="text" id="searchBox" placeholder="Search key (with salt), hash or customer..." oninput="renderTable()" style="max-width:250px; margin:0;">
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>8-Digit Key</th>
+          <th>Customer</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th>Device ID</th>
+          <th>Expiry</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="keyTable"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  // Firebase client configuration. The Firebase Web API key is public app config,
+  // not an admin secret. Never put a password or signing key in this file.
+  const DB_URL = "https://apk-license-default-rtdb.asia-southeast1.firebasedatabase.app";
+  const API_KEY = "AIzaSyD-69LFraxgGjyvTcuvCOKUmyJuXtsbBZc"; // from your original admin.html (public Firebase client configuration)
+  const PROJECT_ID = "apk-license";
+  const ADMIN_UID = "QFhyikjUbYZ3eL3I1QQh0CHYfJR2";
+  // Required ONLY before Firebase App Check enforcement on RTDB:
+  // Register a Firebase WEB app and reCAPTCHA Enterprise/Fraud Defense score-based key for this admin site's HTTPS domain.
+  const WEB_APP_ID = "1:147990234609:web:8793da71487776f7517050"; // Firebase Console > Project settings > Web app > App ID
+  const RECAPTCHA_ENTERPRISE_SITE_KEY = ""; // public Google Cloud Fraud Defense Website score-based site key
+
+  let idToken = "";
+  let refreshToken = "";
+  let tokenExpiresAt = 0;
+  let allKeys = [];
+  const knownPlainKeys = new Map(); // hash -> 8-digit key, in memory only
+  let renderSequence = 0;
+  let appCheckPromise = null;
+
+  // Local encrypted vault: stores only AES-GCM ciphertext + random IV/KDF salt.
+  // Each login unlocks it using the admin Firebase password (never saved to storage).
+  const JG_SALT_VAULT = "jg-kanta-salt-encrypted-v1";
+  let localVaultKey = null;
+  let localVaultKdfSalt = null;
+  let restoredSalt = "";
+
+  function vaultNotice(value) {
+    const element = document.getElementById("saltVaultStatus");
+    if (element) element.textContent = value;
+  }
+  function vaultEncode(bytes) {
+    let result = "";
+    for (const byte of bytes) result += String.fromCharCode(byte);
+    return btoa(result);
+  }
+  function vaultDecode(base64) {
+    return Uint8Array.from(atob(base64), character => character.charCodeAt(0));
+  }
+  async function vaultDeriveKey(password, kdfSalt) {
+    const passwordKey = await crypto.subtle.importKey(
+      "raw", new TextEncoder().encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
+    );
+    return crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt: kdfSalt, iterations: 310000, hash: "SHA-256" },
+      passwordKey, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
+    );
+  }
+
+  async function unlockSaltAfterAdminLogin(password) {
+    if (!crypto.subtle || !crypto.getRandomValues) {
+      vaultNotice("Secure browser storage requires HTTPS. Enter salt manually.");
+      return;
+    }
+    let existing = null;
+    try {
+      const raw = localStorage.getItem(JG_SALT_VAULT);
+      existing = raw ? JSON.parse(raw) : null;
+    } catch (_) { /* Continue without saved data. */ }
+    const valid = existing && existing.v === 1 &&
+      typeof existing.s === "string" && typeof existing.iv === "string" &&
+      typeof existing.ct === "string";
+    let kdfSalt;
+    try { kdfSalt = valid ? vaultDecode(existing.s) : null; } catch (_) { kdfSalt = null; }
+    if (!kdfSalt || kdfSalt.length !== 16) kdfSalt = crypto.getRandomValues(new Uint8Array(16));
+    try {
+      localVaultKey = await vaultDeriveKey(password, kdfSalt);
+      localVaultKdfSalt = kdfSalt;
+      if (valid) {
+        const iv = vaultDecode(existing.iv);
+        const ciphertext = vaultDecode(existing.ct);
+        if (iv.length !== 12 || ciphertext.length < 17) throw Error("Invalid ciphertext");
+        const clear = await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv }, localVaultKey, ciphertext
+        );
+        const saved = new TextDecoder().decode(clear);
+        if (!/^[A-Za-z0-9_-]{24,128}$/.test(saved)) throw Error("Invalid saved salt");
+        document.getElementById("licenseSalt").value = saved;
+        restoredSalt = saved;
+        vaultNotice("Saved salt restored. Encrypted on this browser.");
+      } else {
+        restoredSalt = "";
+        vaultNotice("Paste GitHub salt once, then click Remember Salt on this browser.");
+      }
+    } catch (_) {
+      // A changed admin password makes existing ciphertext unreadable.
+      // Derive a fresh key so the owner can re-save the backed-up license salt.
+      localVaultKdfSalt = crypto.getRandomValues(new Uint8Array(16));
+      localVaultKey = await vaultDeriveKey(password, localVaultKdfSalt);
+      restoredSalt = "";
+      vaultNotice("Saved salt could not be unlocked. Re-enter the backed-up salt, then Remember.");
+    }
+  }
+
+  async function rememberSaltSecurely() {
+    try {
+      const value = getSalt();
+      if (!localVaultKey || !localVaultKdfSalt) {
+        throw Error("Sign in again first.");
+      }
+      if (restoredSalt && restoredSalt !== value &&
+          !confirm("Different salt changes hashed license keys. Replace the stored salt?")) {
+        return;
+      }
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const cipher = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv }, localVaultKey, new TextEncoder().encode(value)
+      );
+      localStorage.setItem(JG_SALT_VAULT, JSON.stringify({
+        v: 1, s: vaultEncode(localVaultKdfSalt), iv: vaultEncode(iv),
+        ct: vaultEncode(new Uint8Array(cipher))
+      }));
+      restoredSalt = value;
+      vaultNotice("Salt encrypted and remembered on this browser. Next login restores it.");
+    } catch (error) {
+      vaultNotice("Could not save: " + error.message);
+    }
+  }
+
+  function forgetSavedSalt() {
+    if (!confirm("Forget this browser's encrypted salt? You must use your saved backup.")) return;
+    try { localStorage.removeItem(JG_SALT_VAULT); } catch (_) {}
+    localVaultKey = null;
+    localVaultKdfSalt = null;
+    restoredSalt = "";
+    document.getElementById("licenseSalt").value = "";
+    vaultNotice("Saved salt removed from this browser. Log in again to re-enable saving.");
+  }
+
+
+  function getSalt() {
+    const value = document.getElementById("licenseSalt").value.trim();
+    if (!/^[A-Za-z0-9_-]{24,128}$/.test(value)) {
+      throw new Error("Paste the exact 24–128 character JG_LICENSE_HASH_SALT used in the Android build.");
+    }
+    return value;
+  }
+
+  async function hashLicenseKey(eightDigitKey, SECRET_SALT) {
+    if (!/^[0-9]{8}$/.test(eightDigitKey)) throw new Error("Enter exactly 8 digits.");
+    if (!/^[A-Za-z0-9_-]{24,128}$/.test(SECRET_SALT)) throw new Error("Invalid license hash salt.");
+    if (!globalThis.crypto || !crypto.subtle) {
+      throw new Error("SHA-256 requires HTTPS or localhost. Open the admin panel from a secure site.");
+    }
+    const bytes = new TextEncoder().encode(eightDigitKey + SECRET_SALT);
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  function secureEightDigitKey() {
+    if (!crypto || !crypto.getRandomValues) throw new Error("Secure random generator is unavailable.");
+    const range = 90000000;
+    const limit = Math.floor(4294967296 / range) * range;
+    const bytes = new Uint32Array(1);
+    do { crypto.getRandomValues(bytes); } while (bytes[0] >= limit);
+    return String(10000000 + (bytes[0] % range));
+  }
+
+  async function currentIdToken() {
+    if (!idToken) throw new Error("Admin session expired. Login again.");
+    if (Date.now() < tokenExpiresAt - 60000) return idToken;
+    if (!refreshToken) throw new Error("Admin token expired. Login again.");
+    const body = new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken });
+    const response = await fetch("https://securetoken.googleapis.com/v1/token?key=" + encodeURIComponent(API_KEY), {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body
+    });
+    if (!response.ok) throw new Error("Admin session expired. Login again.");
+    const data = await response.json();
+    idToken = data.id_token;
+    refreshToken = data.refresh_token || refreshToken;
+    tokenExpiresAt = Date.now() + Number(data.expires_in || 3600) * 1000;
+    return idToken;
+  }
+
+  async function webAppCheckToken() {
+    if (!WEB_APP_ID || !RECAPTCHA_ENTERPRISE_SITE_KEY) return "";
+    if (!appCheckPromise) {
+      appCheckPromise = (async () => {
+        const { initializeApp } = await import("https://www.gstatic.com/firebasejs/13.3.0/firebase-app.js");
+        const { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken } =
+          await import("https://www.gstatic.com/firebasejs/13.3.0/firebase-app-check.js");
+        const app = initializeApp(
+          { apiKey: API_KEY, projectId: PROJECT_ID, appId: WEB_APP_ID },
+          "jg-admin-app-check"
+        );
+        const appCheck = initializeAppCheck(app, {
+          provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_ENTERPRISE_SITE_KEY),
+          isTokenAutoRefreshEnabled: true
+        });
+        return async () => (await getToken(appCheck, false)).token;
+      })();
+    }
+    const getFreshToken = await appCheckPromise;
+    return await getFreshToken();
+  }
+
+  async function dbRequest(method, collection, nodeKey, body, extras) {
+    const token = await currentIdToken();
+    const path = "/" + collection + (nodeKey ? "/" + encodeURIComponent(nodeKey) : "");
+    const url = DB_URL + path + ".json?auth=" + encodeURIComponent(token);
+    const headers = { Accept: "application/json" };
+    const appCheckToken = await webAppCheckToken();
+    if (appCheckToken) headers["X-Firebase-AppCheck"] = appCheckToken;
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (extras && extras.createOnly) headers["If-Match"] = "null_etag";
+    const response = await fetch(url, { method, headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: "no-store"
+    });
+    const responseText = await response.text();
+    if (!response.ok) {
+      const licenseDenied = collection === "licenses" &&
+        (response.status === 401 || response.status === 403);
+      const err = new Error("Firebase " + collection + " HTTP " + response.status +
+        (licenseDenied
+          ? ". Admin access to /licenses is blocked. Publish the reviewed database.rules.json in Firebase Realtime Database Rules and sign in again."
+          : response.status === 401 || response.status === 403
+            ? ". Check account authorization and database Rules." : "."));
+      err.status = response.status;
+      throw err;
+    }
+    return responseText ? JSON.parse(responseText) : null;
+  }
+
+  async function doLogin() {
+    const email = document.getElementById("uEmail").value.trim();
+    const password = document.getElementById("uPass").value;
+    const msg = document.getElementById("loginMsg");
+    const btn = document.getElementById("loginBtn");
+    if (!email || !password) { msg.textContent = "Email aur Password dono dalein!"; return; }
+    btn.textContent = "Verifying...";
+    btn.disabled = true;
+    msg.textContent = "";
+    try {
+      const response = await fetch("https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" +
+        encodeURIComponent(API_KEY), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, returnSecureToken: true })
+      });
+      const result = await response.json();
+      if (!response.ok || !result.idToken || result.localId !== ADMIN_UID) {
+        throw new Error("Admin Firebase UID / email / password is not authorized.");
+      }
+      idToken = result.idToken;
+      refreshToken = result.refreshToken;
+      tokenExpiresAt = Date.now() + Number(result.expiresIn || 3600) * 1000;
+      await loadKeys(true);
+      await unlockSaltAfterAdminLogin(password);
+      document.getElementById("uPass").value = "";
+      document.getElementById("loginBox").style.display = "none";
+      document.getElementById("dashboard").style.display = "block";
+    } catch (error) {
+      idToken = ""; refreshToken = ""; tokenExpiresAt = 0;
+      msg.textContent = error.message || "Login failed. Check internet and Firebase settings.";
+    } finally {
+      btn.textContent = "Secure Login";
+      btn.disabled = false;
+    }
+  }
+
+  async function loadKeys(fromLogin = false) {
+    try {
+      const [hashed, old] = await Promise.allSettled([
+        dbRequest("GET", "licenses"),
+        dbRequest("GET", "keys")
+      ]);
+      if (hashed.status === "rejected" && old.status === "rejected") {
+        throw new Error("Neither /licenses nor /keys is readable by this admin. " +
+          (hashed.reason && hashed.reason.message || ""));
+      }
+      const merged = [];
+      if (hashed.status === "fulfilled" && hashed.value) {
+        for (const [hash, record] of Object.entries(hashed.value)) {
+          if (!/^[a-f0-9]{64}$/.test(hash) || !record || typeof record !== "object") continue;
+          merged.push({ nodeKey: hash, collection: "licenses", ...record });
+        }
+      }
+      if (old.status === "fulfilled" && old.value) {
+        for (const [key, record] of Object.entries(old.value)) {
+          if (!/^[0-9]{8}$/.test(key) || !record || typeof record !== "object") continue;
+          merged.push({ nodeKey: key, collection: "keys", ...record });
+        }
+      }
+      allKeys = merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      document.getElementById("stTotal").textContent = allKeys.length;
+      document.getElementById("stActive").textContent =
+        allKeys.filter(x => x.status === "ACTIVE" && !(x.type === "ONE_TIME" && x.claimed)).length;
+      document.getElementById("stHold").textContent =
+        allKeys.filter(x => x.status !== "ACTIVE" || (x.type === "ONE_TIME" && x.claimed)).length;
+      await renderTable();
+      if (!fromLogin && hashed.status === "rejected") {
+        console.warn("New hashed licenses are not readable until migration rules are published.");
+      }
+    } catch (error) {
+      if (fromLogin) throw error;
+      alert(error.message);
+    }
+  }
+
+  function textCell(row, value, css) {
+    const td = document.createElement("td");
+    if (css) td.style.cssText = css;
+    td.textContent = String(value == null ? "" : value);
+    row.appendChild(td);
+    return td;
+  }
+  function actionButton(parent, label, css, cb) {
+    const b = document.createElement("button");
+    b.className = "btn btn-sm " + css;
+    b.textContent = label;
+    b.addEventListener("click", cb);
+    parent.appendChild(b);
+    return b;
+  }
+
+  async function renderTable() {
+    const callNo = ++renderSequence;
+    const query = document.getElementById("searchBox").value.toLowerCase().trim();
+    let matchHash = "";
+    if (/^[0-9]{8}$/.test(query)) {
+      try { matchHash = await hashLicenseKey(query, getSalt()); }
+      catch (_) { /* Search still works by customer or legacy key. */ }
+    }
+    if (callNo !== renderSequence) return;
+    const tbody = document.getElementById("keyTable");
+    tbody.replaceChildren();
+    for (const item of allKeys) {
+      const isLegacy = item.collection === "keys";
+      const shownKey = isLegacy ? item.nodeKey : knownPlainKeys.get(item.nodeKey);
+      const display = shownKey || "HASH " + item.nodeKey.substring(0, 10) + "…";
+      if (query && !(
+        (item.customer || "").toLowerCase().includes(query) ||
+        item.nodeKey.includes(query) || (shownKey || "").includes(query) ||
+        (matchHash && matchHash === item.nodeKey)
+      )) continue;
+
+      const row = document.createElement("tr");
+      const keyCell = textCell(row, display + (isLegacy ? " (LEGACY)" : ""), "color:#4338ca;font-weight:bold");
+      const copy = actionButton(keyCell, "Copy", "btn-copy", () => {
+        const known = isLegacy ? item.nodeKey : knownPlainKeys.get(item.nodeKey);
+        if (!known) {
+          alert("Hash se original 8-digit key recover nahi ho sakti. Customer ki original key search karein.");
+          return;
+        }
+        copyText(known);
+      });
+      if (!shownKey) copy.title = "Original number is not stored in Firebase";
+      textCell(row, item.customer || "-");
+      textCell(row, item.type === "ONE_TIME" ? "One-Time" : "Device Lock");
+      const shownStatus = item.type === "ONE_TIME" && item.claimed ? "USED" : (item.status || "");
+      const statusCell = textCell(row, shownStatus);
+      const badge = document.createElement("span");
+      badge.className = "badge " + (shownStatus === "ACTIVE" ? "b-active" : shownStatus === "HOLD" ? "b-hold" : "b-used");
+      badge.textContent = shownStatus;
+      statusCell.replaceChildren(badge);
+      textCell(row, item.deviceId || "Not Linked", "font-size:11px;color:#64748b");
+      textCell(row, item.expiry || "Not specified");
+      const actions = textCell(row, "");
+      actionButton(actions, item.status === "ACTIVE" ? "Hold" : "Activate",
+        item.status === "ACTIVE" ? "btn-hold" : "btn-active", () => toggleStatus(item));
+      actionButton(actions, "Reset Device", "btn-reset", () => resetDev(item));
+      actionButton(actions, "Delete", "btn-del", () => delKey(item));
+      tbody.appendChild(row);
+    }
+  }
+
+  async function createKey() {
+    const name = document.getElementById("custName").value.trim();
+    const days = Number(document.getElementById("validDays").value);
+    const type = document.getElementById("keyType").value;
+    const btn = document.getElementById("genBtn");
+    if (!name || name.length > 120) return alert("Customer ka naam dalein (max 120 chars).");
+    if (!Number.isInteger(days) || days < 1 || days > 36500)
+      return alert("Valid days 1 se 36500 tak enter karein.");
+    if (type !== "DEVICE_LOCK" && type !== "ONE_TIME") return alert("Invalid license type.");
+    let salt;
+    try { salt = getSalt(); } catch (error) { alert(error.message); return; }
+    const expires = new Date();
+    expires.setUTCDate(expires.getUTCDate() + days);
+    const expiry = expires.toISOString().split("T")[0];
+    const plan = days === 30 ? "30 Days" : days === 365 ? "1 Year" : days + " Days";
+    btn.textContent = "Saving..."; btn.disabled = true;
+    try {
+      let key = "", hash = "", created = false;
+      for (let attempts = 0; attempts < 8; attempts++) {
+        key = secureEightDigitKey();
+        hash = await hashLicenseKey(key, salt);
+        try {
+          await dbRequest("PUT", "licenses", hash, {
+            customer: name, status: "ACTIVE", type, plan, expiry,
+            createdAt: Date.now(), claimed: false, uid: "", deviceId: ""
+          }, { createOnly: true });
+          created = true;
+          break;
+        } catch (error) {
+          if (error.status === 412) continue; // collision; do not overwrite an existing record
+          throw error;
+        }
+      }
+      if (!created) throw new Error("Could not produce a unique license key.");
+      knownPlainKeys.set(hash, key);
+      document.getElementById("custName").value = "";
+      // Numeric key is never saved in database or browser storage.
+      window.prompt("New 8-digit license generated. COPY it and save securely; the hash cannot reveal it later.", key);
+      await loadKeys();
+    } catch (error) {
+      alert("Key generate failed: " + error.message +
+        "\nApp Check Realtime Database enforcement must remain OFF until all clients are ready.");
+    } finally {
+      btn.textContent = "+ Generate"; btn.disabled = false;
+    }
+  }
+
+  async function toggleStatus(item) {
+    try {
+      await dbRequest("PATCH", item.collection, item.nodeKey,
+        { status: item.status === "ACTIVE" ? "HOLD" : "ACTIVE" });
+      await loadKeys();
+    } catch (error) { alert("Update failed: " + error.message); }
+  }
+
+  async function resetDev(item) {
+    if (!confirm("Is key ka device/account binding hatana hai? Ye license dobara claim ho sakega.")) return;
+    try {
+      await dbRequest("PATCH", item.collection, item.nodeKey,
+        item.collection === "licenses" ? { deviceId: "", claimed: false, uid: "" } : { deviceId: "" });
+      await loadKeys();
+    } catch (error) { alert("Reset failed: " + error.message); }
+  }
+
+  async function delKey(item) {
+    if (!confirm("Is key ko permanently delete karna hai? Isse existing customer ka login band ho sakta hai.")) return;
+    try {
+      await dbRequest("DELETE", item.collection, item.nodeKey);
+      knownPlainKeys.delete(item.nodeKey);
+      await loadKeys();
+    } catch (error) { alert("Delete failed: " + error.message); }
+  }
+
+  async function copyText(value) {
+    try { await navigator.clipboard.writeText(value); alert("Copied: " + value); }
+    catch (_) { window.prompt("Copy license key:", value); }
+  }
+</script>
+</body>
+</html>

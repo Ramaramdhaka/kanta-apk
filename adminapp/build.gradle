@@ -1,0 +1,54 @@
+import groovy.json.JsonSlurper
+plugins { id 'com.android.application' }
+def config = new JsonSlurper().parse(rootProject.file('app/google-services.json'))
+def apiKey = config.client[0].api_key[0].current_key
+def dbUrl = config.project_info.firebase_url
+def salt = System.getenv('JG_LICENSE_HASH_SALT') ?: ''
+if (salt && !(salt ==~ /[A-Za-z0-9_-]{24,128}/)) throw new GradleException('Invalid license hash salt')
+android {
+    namespace 'com.jgkanta.admin'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.jgkanta.admin'
+        minSdk 26
+        targetSdk 35
+        versionCode 3
+        versionName '1.2'
+        buildConfigField 'String', 'API_KEY', '"' + apiKey + '"'
+        buildConfigField 'String', 'DB_URL', '"' + dbUrl + '"'
+        buildConfigField 'String', 'HASH_SALT', '"' + salt + '"'
+        buildConfigField 'String', 'ADMIN_UID', '"QFhyikjUbYZ3eL3I1QQh0CHYfJR2"'
+        buildConfigField 'String', 'ADMIN_EMAIL', '"jogaleghakanod@gmail.com"'
+    }
+    buildFeatures { buildConfig true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    signingConfigs {
+        release {
+            if (System.getenv('JG_KEYSTORE_PATH')) {
+                storeFile file(System.getenv('JG_KEYSTORE_PATH'))
+                storePassword System.getenv('JG_STORE_PASSWORD')
+                keyAlias System.getenv('JG_KEY_ALIAS') ?: 'jg'
+                keyPassword System.getenv('JG_KEY_PASSWORD') ?: System.getenv('JG_STORE_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        debug { minifyEnabled false }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            vcsInfo { include = false }
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (System.getenv('JG_KEYSTORE_PATH')) signingConfig signingConfigs.release
+        }
+    }
+    dependenciesInfo { includeInApk = false; includeInBundle = false }
+}
+dependencies {
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'androidx.security:security-crypto:1.1.0'
+    implementation 'com.google.errorprone:error_prone_annotations:2.36.0'
+}

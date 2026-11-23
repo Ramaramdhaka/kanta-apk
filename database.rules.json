@@ -1,0 +1,60 @@
+{
+  "rules": {
+    "keys": {
+      ".read": "auth != null && auth.uid == 'QFhyikjUbYZ3eL3I1QQh0CHYfJR2' && auth.token.email == 'jogaleghakanod@gmail.com'",
+      ".write": "auth != null && auth.uid == 'QFhyikjUbYZ3eL3I1QQh0CHYfJR2' && auth.token.email == 'jogaleghakanod@gmail.com'"
+    },
+    "licenses": {
+      ".read": "auth != null && auth.uid == 'QFhyikjUbYZ3eL3I1QQh0CHYfJR2' && auth.token.email == 'jogaleghakanod@gmail.com'",
+      ".write": "auth != null && auth.uid == 'QFhyikjUbYZ3eL3I1QQh0CHYfJR2' && auth.token.email == 'jogaleghakanod@gmail.com'",
+      "$hash": {
+        ".read": "auth != null && (data.child('claimed').val() == false || data.child('uid').val() == auth.uid)",
+        ".write": "auth != null && data.exists() && data.child('claimed').val() == false && newData.child('claimed').val() == true && newData.child('uid').val() == auth.uid && newData.child('uid').isString() && data.child('uid').val() == '' && data.child('deviceId').val() == '' && newData.child('deviceId').isString() && newData.child('deviceId').val().matches(/^[a-fA-F0-9]{8,64}$/) && data.child('status').val() == 'ACTIVE' && newData.child('status').val() == data.child('status').val() && newData.child('type').val() == data.child('type').val() && newData.child('expiry').val() == data.child('expiry').val() && newData.child('customer').val() == data.child('customer').val() && newData.child('plan').val() == data.child('plan').val() && newData.child('createdAt').val() == data.child('createdAt').val()",
+        ".validate": "newData.hasChildren(['claimed', 'uid', 'deviceId', 'status', 'type', 'expiry']) && newData.child('claimed').isBoolean() && newData.child('uid').isString() && newData.child('deviceId').isString() && newData.child('expiry').isString()",
+        "claimed": {
+          ".validate": "newData.isBoolean()"
+        },
+        "uid": {
+          ".validate": "newData.isString()"
+        },
+        "deviceId": {
+          ".validate": "newData.isString()"
+        },
+        "status": {
+          ".validate": "newData.isString()"
+        },
+        "type": {
+          ".validate": "newData.isString()"
+        },
+        "expiry": {
+          ".validate": "newData.isString()"
+        },
+        "customer": {
+          ".validate": "newData.isString()"
+        },
+        "plan": {
+          ".validate": "newData.isString()"
+        },
+        "$other": {
+          ".validate": false
+        },
+        "createdAt": {
+          ".validate": "newData.isNumber()"
+        }
+      }
+    },
+    "appPublic": {
+      ".read": true,
+      ".write": "auth != null && auth.uid == 'QFhyikjUbYZ3eL3I1QQh0CHYfJR2' && auth.token.email == 'jogaleghakanod@gmail.com'",
+      "$key": {
+        ".validate": "$key == 'jgKanta' && newData.hasChildren(['banner','update'])",
+        "banner": {
+          ".validate": "newData.hasChildren(['enabled','id','text','url']) && newData.child('enabled').isBoolean() && newData.child('id').isString() && newData.child('id').val().length <= 60 && newData.child('text').isString() && newData.child('text').val().length <= 180 && newData.child('url').isString() && newData.child('url').val().length <= 500"
+        },
+        "update": {
+          ".validate": "newData.hasChildren(['enabled','versionCode','title','message','url']) && newData.child('enabled').isBoolean() && newData.child('versionCode').isNumber() && newData.child('versionCode').val() >= 0 && newData.child('title').isString() && newData.child('title').val().length <= 80 && newData.child('message').isString() && newData.child('message').val().length <= 260 && newData.child('url').isString() && newData.child('url').val().length <= 500"
+        }
+      }
+    }
+  }
+}

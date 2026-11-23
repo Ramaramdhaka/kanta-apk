@@ -22,7 +22,12 @@ final class SecurityGuard {
             return false;
         }
         String expected = BuildConfig.EXPECTED_SIGNATURE_SHA256;
-        if (expected == null || "PASTE_RELEASE_SHA256_HERE".equals(expected)) return true;
+        // A release without a pinned, valid certificate fingerprint must not run.
+        if (expected == null || !expected.matches("(?i)[0-9a-f:]{64,95}") ||
+                "PASTE_RELEASE_SHA256_HERE".equals(expected)) {
+            terminate(activity);
+            return false;
+        }
         try {
             PackageManager manager = activity.getPackageManager();
             PackageInfo info;
@@ -37,18 +42,27 @@ final class SecurityGuard {
                 certificates = info.signatures;
             }
             if (certificates == null || certificates.length == 0) throw new SecurityException("Unsigned");
+            byte[] expectedDigest = hexToBytes(expected.replace(":", ""));
+            if (expectedDigest == null || expectedDigest.length != 32) throw new SecurityException("Bad fingerprint");
             for (Signature certificate : certificates) {
-                byte[] digest = MessageDigest.getInstance("SHA-256").digest(certificate.toByteArray());
-                StringBuilder hex = new StringBuilder(digest.length * 2);
-                for (byte b : digest) hex.append(String.format(Locale.US, "%02x", b & 0xff));
-                if (MessageDigest.isEqual(hex.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                        expected.toLowerCase(Locale.US).replace(":", "").getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
-                    return true;
+                byte[] actualDigest = MessageDigest.getInstance("SHA-256").digest(certificate.toByteArray());
+                if (!MessageDigest.isEqual(actualDigest, expectedDigest)) {
+                    throw new SecurityException("Unexpected signing certificate");
                 }
             }
+            return true;
         } catch (Exception ignored) { /* Fail closed */ }
         terminate(activity);
         return false;
+    }
+
+    private static byte[] hexToBytes(String value) {
+        if (!value.matches("(?i)[0-9a-f]{64}")) return null;
+        byte[] result = new byte[32];
+        for (int i = 0; i < result.length; i++) {
+            result[i] = (byte) Integer.parseInt(value.substring(i * 2, i * 2 + 2), 16);
+        }
+        return result;
     }
 
     private static void terminate(Activity activity) {

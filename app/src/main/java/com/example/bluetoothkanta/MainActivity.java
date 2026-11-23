@@ -89,6 +89,7 @@ public class MainActivity extends Activity {
     private Button loginButton;
     private ProgressBar loginSpinner;
     private int savedInterval = 100;
+    private String noticeDialogAttempt = "";
 
     private final KantaService.UiListener serviceObserver = (status, connected, sent, log) -> {
         if (mainStatus != null && !settingsShowing) {
@@ -127,6 +128,7 @@ public class MainActivity extends Activity {
         getWindow().setNavigationBarColor(BG);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         if (!SecurityGuard.enforce(this)) return;
+        FirebaseLicenseSession.begin(getApplicationContext());
         prefs = getSharedPreferences("jg_ui", MODE_PRIVATE);
         try {
             licenseStore = new LicenseStore(this);
@@ -387,7 +389,83 @@ public class MainActivity extends Activity {
             checkLicense(typed, false);
         });
         setContentView(scroll(content));
+        showPublicNotices(content);
         if (error != null && !error.isEmpty()) Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+    }
+
+
+    /** Non-blocking informational UI. Never changes Bluetooth or license permissions. */
+    private void showPublicNotices(LinearLayout screen) {
+        AppNotices.fetch(notice -> {
+            if(destroyed || screen.getParent() == null) return;
+            if(notice.bannerEnabled && !notice.bannerText.isEmpty()) {
+                String bannerId=notice.campaign.isEmpty()
+                    ? Integer.toHexString(notice.bannerText.hashCode()) : notice.campaign;
+                if(!bannerId.equals(prefs.getString("hidden_banner", ""))) {
+                    LinearLayout card=panel();
+                    LinearLayout bar=horizontal();bar.setGravity(Gravity.CENTER_VERTICAL);
+                    TextView msg=new TextView(this);
+                    msg.setText("📣  "+notice.bannerText);
+                    msg.setTextSize(14);msg.setTextColor(WHITE);
+                    LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,1f);
+                    bar.addView(msg,mp);
+                    Button close=new Button(this);
+                    close.setText("×");close.setContentDescription("Close announcement");
+                    close.setTextSize(24);close.setAllCaps(false);close.setTextColor(WHITE);
+                    close.setBackground(shape(FIELD,0));
+                    LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(dp(46),dp(46));
+                    cp.leftMargin=dp(7);
+                    bar.addView(close,cp);
+                    card.addView(bar);
+                    close.setOnClickListener(v->{
+                        prefs.edit().putString("hidden_banner",bannerId).apply();
+                        screen.removeView(card);
+                    });
+                    if(!notice.bannerUrl.isEmpty()){
+                        Button open=action(card,"MORE INFORMATION",FIELD,WHITE,
+                            ()->openNoticeLink(notice.bannerUrl));
+                        open.setTextSize(12);
+                    }
+                    // Only insert a standalone advisory panel. Keep every existing
+                    // weight control, receiver button and service size unchanged.
+                    screen.addView(card,0,new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT));
+                }
+            }
+
+            int currentVersion=BuildConfig.VERSION_CODE;
+            if(notice.updateEnabled && notice.minVersion>currentVersion
+                    && !notice.updateUrl.isEmpty()){
+                String campaign="version_"+notice.minVersion;
+                if(!campaign.equals(prefs.getString("dismissed_update",""))
+                        && !campaign.equals(noticeDialogAttempt)
+                        && !isFinishing()){
+                    noticeDialogAttempt=campaign;
+                    new AlertDialog.Builder(this)
+                        .setTitle(notice.updateTitle.isEmpty()
+                            ? "JG Kanta Update Available":notice.updateTitle)
+                        .setMessage(notice.updateText.isEmpty()
+                            ? "An updated JG Kanta APK is available.":notice.updateText)
+                        .setPositiveButton("UPDATE", (dialog,which)->
+                            openNoticeLink(notice.updateUrl))
+                        .setNegativeButton("LATER",(dialog,which)->
+                            prefs.edit().putString("dismissed_update",campaign).apply())
+                        .show();
+                }
+            }
+        });
+    }
+    private void openNoticeLink(String link){
+        try {
+            Uri parsed=Uri.parse(link);
+            if(!"https".equalsIgnoreCase(parsed.getScheme()) ||
+                    parsed.getHost()==null){
+                toast("Invalid update link");return;
+            }
+            startActivity(new Intent(Intent.ACTION_VIEW,parsed));
+        }catch(Exception ignored){toast("Unable to open the link");}
     }
 
     private void openLicensePurchase() {
@@ -494,6 +572,7 @@ public class MainActivity extends Activity {
         label(content, "KEY EXPIRES: " + (expiry.isEmpty() ? "Not specified" : expiry),
                 13, MUTED, Gravity.CENTER);
         setContentView(scroll(content));
+        showPublicNotices(content);
         ensureBluetooth();
     }
 
