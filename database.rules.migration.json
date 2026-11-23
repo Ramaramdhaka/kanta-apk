@@ -47,6 +47,16 @@
           ".validate": "newData.isNumber()"
         }
       }
+    },
+    "appPublic": {
+      ".read": true,
+      ".write": "auth != null && auth.uid == 'QFhyikjUbYZ3eL3I1QQh0CHYfJR2' && auth.token.email == 'jogaleghakanod@gmail.com'",
+      "$key": {
+        ".validate": "$key == 'jgKanta' && newData.hasChildren(['banner','update'])",
+        "$other": {
+          ".validate": false
+        }
+      }
     }
   }
 }
