@@ -57,6 +57,9 @@ public final class MainActivity extends Activity {
     private TextView feedback,stats;
     private EditText customer,search;
     private Spinner plan,type,filter;
+    private EditText bannerMessage,bannerLink,updateVersion,updateTitle,updateMessage,updateLink;
+    private CheckBox bannerEnabled,updateEnabled;
+    private TextView noticesHint;
     private boolean busy=false;
     private int visibleLimit=25;
     private TextView recordsHeader;
@@ -245,6 +248,32 @@ public final class MainActivity extends Activity {
         space(content,15);
         LinearLayout statCard=card(content);
         stats=label("Loading license records…",16,TEXT,true);statCard.addView(stats);
+        LinearLayout notice=card(content);
+        notice.addView(label("CUSTOMER BANNER & APP UPDATES",13,ACCENT,true));space(notice,7);
+        notice.addView(label("Set messages remotely without changing JG Kanta Bluetooth settings.",12,SUB,false));
+        space(notice,11);
+        bannerEnabled=new CheckBox(this);
+        bannerEnabled.setText("Show announcement banner");bannerEnabled.setTextColor(TEXT);
+        notice.addView(bannerEnabled);
+        bannerMessage=field("Banner message (up to 180 characters)",false);
+        bannerMessage.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(180)});
+        notice.addView(bannerMessage);space(notice,8);
+        bannerLink=field("Optional HTTPS banner link",false);notice.addView(bannerLink);
+        space(notice,12);
+        updateEnabled=new CheckBox(this);
+        updateEnabled.setText("Announce new JG Kanta APK version");updateEnabled.setTextColor(TEXT);
+        notice.addView(updateEnabled);
+        updateVersion=field("New APK versionCode (must be greater than installed)",false);
+        updateVersion.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        notice.addView(updateVersion);space(notice,8);
+        updateTitle=field("Update title",false);notice.addView(updateTitle);space(notice,8);
+        updateMessage=field("Update notice text",false);notice.addView(updateMessage);space(notice,8);
+        updateLink=field("HTTPS link to new APK / official download page",false);
+        notice.addView(updateLink);space(notice,10);
+        noticesHint=label("Remote notices require updated Firebase database Rules.",12,SUB,false);
+        notice.addView(noticesHint);space(notice,10);
+        notice.addView(button("LOAD SAVED NOTICES",SURFACE,this::loadNotices));space(notice,7);
+        notice.addView(button("SAVE & PUBLISH CUSTOMER NOTICES",ACCENT,this::saveNotices));
         LinearLayout generator=card(content);
         generator.addView(label("GENERATE 8-DIGIT KEY",12,ACCENT,true));space(generator,12);
         customer=field("Customer name",false);generator.addView(customer);space(generator,11);
@@ -280,7 +309,10 @@ public final class MainActivity extends Activity {
         if(idToken.isEmpty())return;
         final ArrayList<Entry> loaded=new ArrayList<>();
         final boolean[] canReadOld={true};
+        final JSONObject[] remoteNotices={null};
         execute(()->{
+            try {remoteNotices[0]=database("GET","appPublic/jgKanta",null,null);}
+            catch(IOException ignored){/* Optional while Rules are not yet published. */}
             addRecords(loaded,database("GET","licenses",null,null),"licenses");
             try { addRecords(loaded,database("GET","keys",null,null),"keys"); }
             catch(IOException denied) {canReadOld[0]=false;}
@@ -298,6 +330,7 @@ public final class MainActivity extends Activity {
                 "\nUsed / Claimed "+used+"   Old keys "+old+
                 (canReadOld[0]?"":" (not readable)"));
             visibleLimit=25;render();
+            if(remoteNotices[0]!=null)populateNotices(remoteNotices[0]);
         });
     }
     private void addRecords(ArrayList<Entry> output,JSONObject json,String source) {
@@ -313,6 +346,86 @@ public final class MainActivity extends Activity {
         try{return LocalDate.parse(e.expiry).isBefore(LocalDate.now());}
         catch(Exception ignored){return false;}
     }
+
+    private static String cleanUrl(String value)throws IOException{
+        String input=value==null?"":value.trim();
+        if(input.isEmpty())return "";
+        if(input.length()>500)throw new IOException("Link too long");
+        try {
+            java.net.URI parsed=new java.net.URI(input);
+            if(!"https".equalsIgnoreCase(parsed.getScheme()) ||
+                parsed.getHost()==null || parsed.getUserInfo()!=null) {
+                throw new IOException("Use a valid HTTPS link");
+            }
+            return parsed.toString();
+        } catch(java.net.URISyntaxException error){throw new IOException("Invalid HTTPS link");}
+    }
+    private void populateNotices(JSONObject notice){
+        JSONObject banner=notice.optJSONObject("banner");
+        JSONObject update=notice.optJSONObject("update");
+        if(banner!=null) {
+            bannerEnabled.setChecked(banner.optBoolean("enabled",false));
+            bannerMessage.setText(banner.optString("text",""));
+            bannerLink.setText(banner.optString("url",""));
+        }
+        if(update!=null) {
+            updateEnabled.setChecked(update.optBoolean("enabled",false));
+            int code=update.optInt("versionCode",0);
+            updateVersion.setText(code==0?"":String.valueOf(code));
+            updateTitle.setText(update.optString("title",""));
+            updateMessage.setText(update.optString("message",""));
+            updateLink.setText(update.optString("url",""));
+        }
+        if(noticesHint!=null)noticesHint.setText("Current notice configuration loaded from Firebase.");
+    }
+    private void loadNotices(){
+        final JSONObject[] loaded={null};
+        execute(()->loaded[0]=database("GET","appPublic/jgKanta",null,null),
+            ()->{
+                if(loaded[0]!=null)populateNotices(loaded[0]);
+                else noticesHint.setText("No published notices yet. Configure and Save.");
+            });
+    }
+    private void saveNotices(){
+        String announcement=bannerMessage.getText().toString().trim();
+        String bannerHref=bannerLink.getText().toString().trim();
+        String title=updateTitle.getText().toString().trim();
+        String description=updateMessage.getText().toString().trim();
+        String updateHref=updateLink.getText().toString().trim();
+        boolean showBanner=bannerEnabled.isChecked(),showUpdate=updateEnabled.isChecked();
+        int code=0;
+        String rawCode=updateVersion.getText().toString().trim();
+        try {if(!rawCode.isEmpty())code=Integer.parseInt(rawCode);}
+        catch(NumberFormatException error){feedback.setText("Invalid update versionCode");return;}
+        if(showBanner&&announcement.isEmpty()){feedback.setText("Banner text is required");return;}
+        if(showUpdate&&(code<1||updateHref.isEmpty())){
+            feedback.setText("Update needs versionCode and HTTPS download link");return;
+        }
+        if(title.length()>80||description.length()>260){
+            feedback.setText("Update title/message too long");return;
+        }
+        final int requestedVersion=code;
+        execute(()->{
+            JSONObject banner=new JSONObject();
+            banner.put("enabled",showBanner);
+            banner.put("id",String.valueOf(System.currentTimeMillis()));
+            banner.put("text",announcement);
+            banner.put("url",cleanUrl(bannerHref));
+            JSONObject update=new JSONObject();
+            update.put("enabled",showUpdate);
+            update.put("versionCode",requestedVersion);
+            update.put("title",title.isEmpty()?"New JG Kanta update available":title);
+            update.put("message",description.isEmpty()?"A newer version is available.":description);
+            update.put("url",cleanUrl(updateHref));
+            JSONObject publicInfo=new JSONObject();
+            publicInfo.put("banner",banner);publicInfo.put("update",update);
+            database("PUT","appPublic/jgKanta",publicInfo,null);
+        },()->{
+            noticesHint.setText("Saved successfully. Users will see updates on the next app open.");
+            Toast.makeText(this,"Notices published",Toast.LENGTH_LONG).show();
+        });
+    }
+
     private void generate(){
         final String name=customer.getText().toString().trim();
         if(name.isEmpty()||name.length()>120){feedback.setText("Enter customer name (max 120 chars)");return;}
