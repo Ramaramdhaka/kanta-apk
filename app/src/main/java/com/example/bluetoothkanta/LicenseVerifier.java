@@ -61,10 +61,10 @@ public final class LicenseVerifier {
 
     public static Result verify(Context context, String key, boolean savedDeviceLockRecheck) {
         if (key == null || !key.matches("[0-9]{8}")) {
-            return rejected("Enter an 8-digit numeric License Key", true);
+            return rejected("Please enter a valid 8-digit license key. Need a key? Tap Buy Now.", true);
         }
         if (!NetUtil.hasInternet(context)) {
-            return blocked("Internet connection required to verify license");
+            return blocked("Internet connection is required to verify your key. Please try again.");
         }
         String device = Settings.Secure.getString(
                 context.getContentResolver(), Settings.Secure.ANDROID_ID);
@@ -79,10 +79,9 @@ public final class LicenseVerifier {
             credentials = FirebaseLicenseSession.credentials(context.getApplicationContext());
             path = FirebaseLicenseSession.hashedKey(key);
         } catch (Exception authFailure) {
-            // Show the failure stage, without leaking Firebase tokens or secrets.
-            String explanation = authFailure.getMessage();
-            if (explanation == null || explanation.length() > 120) explanation = "Unknown authentication error";
-            return blocked(explanation);
+            // Fail closed, but never reveal Firebase configuration details to customers.
+            android.util.Log.w("JG-License", "Private license authentication diagnostic", authFailure);
+            return blocked("License service is temporarily unavailable. Please check internet and try again.");
         }
 
         final String url = Obfuscated.baseUrl() + "licenses/" + path + ".json?auth=" +
@@ -90,7 +89,7 @@ public final class LicenseVerifier {
         try {
             for (int attempt = 0; attempt < 3; attempt++) {
                 Snapshot snapshot = load(url, credentials.appCheckToken);
-                if (snapshot.value == null) return rejected("Invalid License Key!", true);
+                if (snapshot.value == null) return rejected("This license key is incorrect. Please check the number or tap Buy Now.", true);
 
                 JSONObject record = snapshot.value;
                 String status = record.optString(Obfuscated.status(), "");
@@ -143,14 +142,19 @@ public final class LicenseVerifier {
                 if (responseCode == 200) return success(type, expiry);
                 if (responseCode == 412) continue; // simultaneous claims: re-read and deny losing UID
                 if (responseCode == 401 || responseCode == 403)
-                    return blocked("License activation denied by Firebase Rules.");
+                    return blocked("We could not activate this key right now. Please try again or contact support.");
                 return blocked("Firebase activation failed (HTTP " + responseCode + ").");
             }
             return blocked("License was claimed during login. Try again.");
         } catch (HttpFailure error) {
-            if (error.status == 401 || error.status == 403)
-                return blocked("Firebase authentication or database access denied.");
-            return blocked("Firebase error (HTTP " + error.status + "). Try again.");
+            if (error.status == 401 || error.status == 403) {
+                // Firebase rules intentionally conceal nonexistent /licenses/<hash>
+                // with permission_denied. Never grant access on HTTP 401/403.
+                // Do not count it as a definite wrong-key attempt: it can also
+                // mean temporary auth/rules/App Check misconfiguration.
+                return rejected("Invalid or unavailable license key. Check the 8-digit key or tap Buy Now.", false);
+            }
+            return blocked("Could not contact the license service. Please try again shortly.");
         } catch (Exception error) {
             return blocked("Could not verify license. Check internet and try again.");
         }
