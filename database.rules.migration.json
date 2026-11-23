@@ -53,8 +53,11 @@
       ".write": "auth != null && auth.uid == 'QFhyikjUbYZ3eL3I1QQh0CHYfJR2' && auth.token.email == 'jogaleghakanod@gmail.com'",
       "$key": {
         ".validate": "$key == 'jgKanta' && newData.hasChildren(['banner','update'])",
-        "$other": {
-          ".validate": false
+        "banner": {
+          ".validate": "newData.hasChildren(['enabled','id','text','url']) && newData.child('enabled').isBoolean() && newData.child('id').isString() && newData.child('id').val().length <= 60 && newData.child('text').isString() && newData.child('text').val().length <= 180 && newData.child('url').isString() && newData.child('url').val().length <= 500"
+        },
+        "update": {
+          ".validate": "newData.hasChildren(['enabled','versionCode','title','message','url']) && newData.child('enabled').isBoolean() && newData.child('versionCode').isNumber() && newData.child('versionCode').val() >= 0 && newData.child('title').isString() && newData.child('title').val().length <= 80 && newData.child('message').isString() && newData.child('message').val().length <= 260 && newData.child('url').isString() && newData.child('url').val().length <= 500"
         }
       }
     }
