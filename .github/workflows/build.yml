@@ -198,3 +198,58 @@ jobs:
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
+
+  build-admin:
+    name: Build JG Admin signed release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      JG_LICENSE_HASH_SALT: ${{ secrets.JG_LICENSE_HASH_SALT }}
+      WRAP_SECRET: ${{ secrets.JG_KEYSTORE_WRAP_SECRET }}
+      JG_STORE_PASSWORD: ${{ secrets.JG_RELEASE_STORE_PASSWORD }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Validate JG Admin signing setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$JG_LICENSE_HASH_SALT" =~ ^[A-Za-z0-9_-]{24,128}$ ]] || { echo 'Admin build requires matching license hash salt'; exit 1; }
+          test -f signing/jg-release.p12.gpg
+          test -f signing/jg-release.sha256.txt
+          test -n "$WRAP_SECRET"
+          test -n "$JG_STORE_PASSWORD"
+      - name: Decrypt existing release keystore and pin certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          keypath="$RUNNER_TEMP/jg-admin-release.p12"
+          printf '%s' "$WRAP_SECRET" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
+            --decrypt --output "$keypath" signing/jg-release.p12.gpg
+          actual=$(keytool -list -v -keystore "$keypath" -storetype PKCS12 \
+            -storepass "$JG_STORE_PASSWORD" -alias jg \
+            | awk '/SHA256:/{print $2;exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          test "$actual" = "$(cat signing/jg-release.sha256.txt)" || { echo 'Signing SHA-256 mismatch'; exit 1; }
+          echo "JG_KEYSTORE_PATH=$keypath" >> "$GITHUB_ENV"
+          echo 'JG_KEY_ALIAS=jg' >> "$GITHUB_ENV"
+          echo "JG_KEY_PASSWORD=$JG_STORE_PASSWORD" >> "$GITHUB_ENV"
+      - name: Build JG Admin signed release APK
+        run: gradle --no-daemon --stacktrace :adminapp:assembleRelease
+      - name: Upload JG Admin signed release
+        uses: actions/upload-artifact@v4
+        with:
+          name: JG-Admin-signed-APK
+          path: adminapp/build/outputs/apk/release/adminapp-release.apk
+          if-no-files-found: error
+          retention-days: 14
