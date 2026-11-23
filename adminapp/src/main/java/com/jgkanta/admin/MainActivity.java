@@ -3,6 +3,12 @@ package com.jgkanta.admin;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.os.Bundle;
+import android.content.Intent;
+import android.widget.ImageView;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -50,15 +56,19 @@ public final class MainActivity extends Activity {
     private LinearLayout content,records;
     private TextView feedback,stats;
     private EditText customer,search;
-    private Spinner plan,type;
+    private Spinner plan,type,filter;
     private boolean busy=false;
+    private int visibleLimit=25;
+    private TextView recordsHeader;
+    private final Handler uiHandler=new Handler(Looper.getMainLooper());
+    private Runnable searchRunnable;
     private final ArrayList<Entry> entries=new ArrayList<>();
 
     private static class Entry {
-        String hash,customer,status,type,expiry,uid,deviceId,plan;
+        String hash,customer,status,type,expiry,uid,deviceId,plan,collection;
         boolean claimed;
-        Entry(String key,JSONObject data) {
-            hash=key;customer=data.optString("customer","-");
+        Entry(String key,JSONObject data,String source) {
+            hash=key;collection=source;customer=data.optString("customer","-");
             status=data.optString("status","?");type=data.optString("type","");
             expiry=data.optString("expiry","");uid=data.optString("uid","");
             deviceId=data.optString("deviceId","");plan=data.optString("plan","");
@@ -78,7 +88,7 @@ public final class MainActivity extends Activity {
         } catch(Exception e) { vault=null; } // No insecure plaintext fallback.
         loginScreen();
     }
-    @Override protected void onDestroy() {pool.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy() {if(searchRunnable!=null)uiHandler.removeCallbacks(searchRunnable);pool.shutdownNow();super.onDestroy();}
 
     private void execute(Work job,Runnable success) {
         if(busy)return;
@@ -137,8 +147,15 @@ public final class MainActivity extends Activity {
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(BG);
         content=column();content.setPadding(dp(18),dp(30),dp(18),dp(35));
         scroll.addView(content);setContentView(scroll);
-        content.addView(label("JG  /  PRIVATE CONSOLE",12,ACCENT,true));
-        space(content,9);content.addView(label(title,29,TEXT,true));space(content,3);
+        LinearLayout identity=row();
+        ImageView logo=new ImageView(this);logo.setImageResource(R.drawable.jg_logo);
+        logo.setContentDescription("JG Logo");logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        identity.addView(logo,new LinearLayout.LayoutParams(dp(64),dp(64)));
+        LinearLayout brand=column();LinearLayout.LayoutParams blp=new LinearLayout.LayoutParams(-2,-2);blp.leftMargin=dp(12);
+        identity.addView(brand,blp);brand.addView(label("JG ADMIN",17,ACCENT,true));
+        brand.addView(label("PRIVATE LICENSE CONSOLE",11,SUB,true));
+        content.addView(identity);
+        space(content,14);content.addView(label(title,29,TEXT,true));space(content,3);
         content.addView(label(subtitle,13,SUB,false));space(content,18);
         feedback=label("",12,ACCENT,false);content.addView(feedback);space(content,12);
     }
@@ -239,38 +256,69 @@ public final class MainActivity extends Activity {
         generator.addView(type);space(generator,14);
         generator.addView(button("+ GENERATE KEY",ACCENT,this::generate));
         LinearLayout history=card(content);
-        history.addView(label("LICENSE RECORDS",12,ACCENT,true));space(history,10);
+        history.addView(label("ALL LICENSE RECORDS",12,ACCENT,true));space(history,10);
         search=field("Search by customer, key or hash",false);history.addView(search);space(history,9);
-        history.addView(button("Search / Show All",SURFACE,this::render));space(history,12);
+        filter=dropdown(new String[]{"All","Active","On Hold","Used / Claimed","Expired"});history.addView(filter);space(history,8);
+        filter.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
+            public void onItemSelected(android.widget.AdapterView<?> p,View v,int pos,long id){visibleLimit=25;render();}
+            public void onNothingSelected(android.widget.AdapterView<?> p){}
+        });
+        search.addTextChangedListener(new TextWatcher(){
+            public void beforeTextChanged(CharSequence s,int st,int c,int a){}
+            public void onTextChanged(CharSequence s,int st,int before,int count){
+                if(searchRunnable!=null)uiHandler.removeCallbacks(searchRunnable);
+                searchRunnable=()->{visibleLimit=25;render();};
+                uiHandler.postDelayed(searchRunnable,180);
+            }
+            public void afterTextChanged(Editable e){}
+        });
+        recordsHeader=label("Loading records…",12,SUB,false);history.addView(recordsHeader);space(history,9);
         records=column();history.addView(records);
         content.addView(label("Original keys are encrypted on this phone. Keep an external backup; hashes cannot be reversed.",11,SUB,false));
     }
     private void refresh() {
         if(idToken.isEmpty())return;
         final ArrayList<Entry> loaded=new ArrayList<>();
+        final boolean[] canReadOld={true};
         execute(()->{
-            JSONObject data=database("GET","licenses",null,null);
-            Iterator<String> iterator=data.keys();
-            while(iterator.hasNext()){
-                String key=iterator.next();
-                if(!key.matches("[a-f0-9]{64}"))continue;
-                JSONObject j=data.optJSONObject(key);
-                if(j!=null)loaded.add(new Entry(key,j));
-            }
-            Collections.sort(loaded,Comparator.comparing(e->e.customer.toLowerCase(Locale.ROOT)));
+            addRecords(loaded,database("GET","licenses",null,null),"licenses");
+            try { addRecords(loaded,database("GET","keys",null,null),"keys"); }
+            catch(IOException denied) {canReadOld[0]=false;}
+            Collections.sort(loaded,(a,b)->a.customer.compareToIgnoreCase(b.customer));
         },()->{
             entries.clear();entries.addAll(loaded);
-            int active=0,hold=0;
-            for(Entry e:entries){if("ACTIVE".equals(e.status))active++;else hold++;}
-            stats.setText("Total "+entries.size()+"     Active "+active+"     Hold/Used "+hold);
-            render();
+            int active=0,hold=0,used=0,old=0;
+            for(Entry e:entries){
+                if("keys".equals(e.collection))old++;
+                if("HOLD".equals(e.status))hold++;
+                else if(e.claimed||"USED".equals(e.status))used++;
+                else if("ACTIVE".equals(e.status))active++;
+            }
+            stats.setText("Total "+entries.size()+"   Active "+active+"   Hold "+hold+
+                "\nUsed / Claimed "+used+"   Old keys "+old+
+                (canReadOld[0]?"":" (not readable)"));
+            visibleLimit=25;render();
         });
+    }
+    private void addRecords(ArrayList<Entry> output,JSONObject json,String source) {
+        Iterator<String> it=json.keys();
+        while(it.hasNext()){
+            String k=it.next();
+            if(!k.matches("licenses".equals(source)?"[a-f0-9]{64}":"[0-9]{8}"))continue;
+            JSONObject value=json.optJSONObject(k);
+            if(value!=null)output.add(new Entry(k,value,source));
+        }
+    }
+    private boolean expired(Entry e){
+        try{return LocalDate.parse(e.expiry).isBefore(LocalDate.now());}
+        catch(Exception ignored){return false;}
     }
     private void generate(){
         final String name=customer.getText().toString().trim();
         if(name.isEmpty()||name.length()>120){feedback.setText("Enter customer name (max 120 chars)");return;}
         final int period=plan.getSelectedItemPosition(),kind=type.getSelectedItemPosition();
         final String[] output=new String[1];
+        final Entry[] newLicense=new Entry[1];
         execute(()->{
             for(int i=0;i<10;i++){
                 String plain=newKey(),hashed=hashKey(plain);
@@ -284,7 +332,7 @@ public final class MainActivity extends Activity {
                 try {
                     database("PUT","licenses/"+hashed,node,"null_etag");
                     if(vault!=null)vault.edit().putString(hashed,plain).apply();
-                    output[0]=plain;return;
+                    output[0]=plain;newLicense[0]=new Entry(hashed,node,"licenses");return;
                 } catch(IOException collision) {
                     if("KEY_COLLISION".equals(collision.getMessage()))continue;
                     throw collision;
@@ -293,57 +341,129 @@ public final class MainActivity extends Activity {
             throw new IOException("Could not generate unique key");
         },()->{
             customer.setText("");
-            new AlertDialog.Builder(this).setTitle("New license created")
-                .setMessage("8-DIGIT KEY: "+output[0]+"\n\nCopy and securely record this key. The database hash cannot reveal it.")
-                .setPositiveButton("COPY",(dlg,which)->copy(output[0]))
+            copySilently(output[0]);
+            new AlertDialog.Builder(this).setTitle("JG License Created ✓")
+                .setMessage(message(newLicense[0],output[0])+"\n\n8-digit key copied to clipboard.")
+                .setPositiveButton("WhatsApp Share",(dlg,which)->share(newLicense[0],output[0]))
+                .setNeutralButton("Copy Key",(dlg,which)->copy(output[0]))
                 .setNegativeButton("Done",null).show();
             refresh();
         });
     }
+    private void copySilently(String value){
+        ClipboardManager cm=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+        cm.setPrimaryClip(ClipData.newPlainText("JG License Key",value));
+    }
     private void copy(String value){
-        ClipboardManager clipboard=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
-        clipboard.setPrimaryClip(ClipData.newPlainText("JG license",value));
-        Toast.makeText(this,"Key copied",Toast.LENGTH_SHORT).show();
+        copySilently(value);Toast.makeText(this,"License key copied",Toast.LENGTH_SHORT).show();
+    }
+    private String known(Entry e){
+        if("keys".equals(e.collection))return e.hash;
+        return vault==null?null:vault.getString(e.hash,null);
+    }
+    private String message(Entry e,String key){
+        String p=e.plan;
+        if("30 Days".equals(p))p+=" (₹300)";
+        else if("1 Year".equals(p))p+=" (₹1200)";
+        else if("Lifetime".equals(p))p+=" (₹2000)";
+        return "🔐 *JG Kanta License*\n\n"+
+            "👤 Customer: "+e.customer+"\n"+
+            "🔑 *License Key: "+key+"*\n"+
+            "📦 Plan: "+p+"\n"+
+            "📅 Validity: "+("Lifetime".equals(e.plan)?"Lifetime (system expiry "+e.expiry+")":e.expiry)+"\n"+
+            "📱 Type: "+("ONE_TIME".equals(e.type)?"One-Time":"Device Lock (1 mobile)")+"\n\n"+
+            "Open JG Kanta and enter the 8-digit key to activate your license.\nThank you!";
+    }
+    private void share(Entry e,String key){
+        if(key==null||!key.matches("[0-9]{8}"))return;
+        copySilently(key);
+        Intent intent=new Intent(Intent.ACTION_SEND);
+        intent.setType("text/plain");
+        intent.putExtra(Intent.EXTRA_TEXT,message(e,key));
+        try {startActivity(Intent.createChooser(intent,"Share license via WhatsApp"));}
+        catch(Exception error){Toast.makeText(this,"WhatsApp/share app not installed",Toast.LENGTH_LONG).show();}
+    }
+    private void linkOriginal(Entry e){
+        EditText key=field("Original 8-digit number",false);
+        key.setInputType(InputType.TYPE_CLASS_NUMBER);
+        key.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(8)});
+        new AlertDialog.Builder(this).setTitle("Link original key")
+            .setMessage("For keys created earlier on the website, enter the original 8-digit number once. It is stored encrypted on this phone.")
+            .setView(key).setPositiveButton("Link",(dialog,which)->{
+                String value=key.getText().toString().trim();
+                try{
+                    if(!e.hash.equals(hashKey(value)))throw new IOException("Key does not match this record");
+                    if(vault==null)throw new IOException("Encrypted storage unavailable");
+                    vault.edit().putString(e.hash,value).apply();
+                    render();
+                }catch(Exception err){Toast.makeText(this,err.getMessage(),Toast.LENGTH_LONG).show();}
+            }).setNegativeButton("Cancel",null).show();
     }
     private void render(){
-        if(records==null)return;
+        if(records==null||search==null)return;
         records.removeAllViews();
-        String query=search.getText().toString().trim().toLowerCase(Locale.ROOT);
-        String hashed="";
-        if(query.matches("[0-9]{8}"))try{hashed=hashKey(query);}catch(Exception ignore){}
-        int shown=0;
+        String q=search.getText().toString().trim().toLowerCase(Locale.ROOT);
+        String queryHash="";
+        if(q.matches("[0-9]{8}"))try{queryHash=hashKey(q);}catch(Exception ignored){}
+        int selection=filter==null?0:filter.getSelectedItemPosition();
+        int matching=0,shown=0;
         for(Entry e:entries){
-            String original=vault==null?null:vault.getString(e.hash,null);
-            if(!query.isEmpty()&&!e.customer.toLowerCase(Locale.ROOT).contains(query)&&
-                !e.hash.contains(query)&&!(original!=null&&original.contains(query))&&!e.hash.equals(hashed))continue;
+            String original=known(e);
+            if(!q.isEmpty()&&!e.customer.toLowerCase(Locale.ROOT).contains(q)&&
+                !e.hash.contains(q)&&!(original!=null&&original.contains(q))&&!e.hash.equals(queryHash))continue;
+            if(selection==1&&(!"ACTIVE".equals(e.status)||e.claimed||expired(e)))continue;
+            if(selection==2&&!"HOLD".equals(e.status))continue;
+            if(selection==3&&!e.claimed&&!"USED".equals(e.status))continue;
+            if(selection==4&&!expired(e))continue;
+            matching++;
+            if(shown>=visibleLimit)continue;
             shown++;
-            LinearLayout c=column();c.setPadding(dp(13),dp(13),dp(13),dp(13));c.setBackground(bg(SURFACE,13));
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(9);records.addView(c,lp);
-            c.addView(label(e.customer,17,TEXT,true));space(c,4);
-            c.addView(label((original==null?"HASH "+e.hash.substring(0,12)+"…":original)+" · "+e.plan,13,ACCENT,true));
-            space(c,5);c.addView(label(e.status+" • "+e.type+" • Expires "+e.expiry,12,SUB,false));
-            c.addView(label(e.claimed?"Claimed · "+e.deviceId:"Unclaimed",11,SUB,false));space(c,9);
-            LinearLayout actions=row();c.addView(actions);
-            if(original!=null)actions.addView(button("Copy",0xFF247861,()->copy(original)),
-                new LinearLayout.LayoutParams(0,dp(46),1f));
-            LinearLayout.LayoutParams actionLp=new LinearLayout.LayoutParams(0,dp(46),1f);actionLp.leftMargin=dp(5);
-            actions.addView(button("Manage",CARD,()->manage(e)),actionLp);
+            LinearLayout item=column();item.setPadding(dp(14),dp(14),dp(14),dp(14));
+            item.setBackground(bg(SURFACE,15));
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+            lp.bottomMargin=dp(10);records.addView(item,lp);
+            item.addView(label(e.customer,17,TEXT,true));space(item,5);
+            item.addView(label((original==null?"HASH "+e.hash.substring(0,12)+"…":original)+
+                "  •  "+e.plan,14,ACCENT,true));space(item,5);
+            item.addView(label(("keys".equals(e.collection)?"Old Key":"Secure Key")+" • "+
+                e.status+(expired(e)?" • EXPIRED":"")+" • "+e.type,12,SUB,false));
+            item.addView(label("Validity until: "+e.expiry+
+                (e.claimed?" • Claimed":" • Unclaimed"),12,SUB,false));
+            space(item,10);
+            LinearLayout actions=row();item.addView(actions);
+            if(original!=null){
+                actions.addView(button("Copy",0xFF23765B,()->copy(original)),
+                    new LinearLayout.LayoutParams(0,dp(48),1f));
+                LinearLayout.LayoutParams wa=new LinearLayout.LayoutParams(0,dp(48),1.2f);
+                wa.leftMargin=dp(4);
+                actions.addView(button("WhatsApp",0xFF16865A,()->share(e,original)),wa);
+            }else{
+                actions.addView(button("Link key",0xFF23765B,()->linkOriginal(e)),
+                    new LinearLayout.LayoutParams(0,dp(48),1f));
+            }
+            LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(0,dp(48),1f);mp.leftMargin=dp(4);
+            actions.addView(button("Manage",CARD,()->manage(e)),mp);
         }
-        if(shown==0)records.addView(label("No matching keys. Generate one above.",13,SUB,false));
+        if(recordsHeader!=null)recordsHeader.setText("Showing "+shown+" of "+matching+
+            " matching • Total records "+entries.size());
+        if(matching>visibleLimit)records.addView(button(
+            "Show next "+Math.min(25,matching-visibleLimit)+" keys",SURFACE,
+            ()->{visibleLimit+=25;render();}));
+        if(matching==0)records.addView(label("No records found.",13,SUB,false));
     }
     private void manage(Entry entry){
         String[] actions={entry.status.equals("ACTIVE")?"Put on HOLD":"Activate","Reset Device + Owner","Delete License"};
         new AlertDialog.Builder(this).setTitle(entry.customer).setItems(actions,(dialog,which)->{
             if(which==0)confirm("Change license status?",()->{
                 JSONObject value=new JSONObject();value.put("status",entry.status.equals("ACTIVE")?"HOLD":"ACTIVE");
-                database("PATCH","licenses/"+entry.hash,value,null);
+                database("PATCH",entry.collection+"/"+entry.hash,value,null);
             });
             else if(which==1)confirm("Reset claim? Another device could activate this key.",()->{
                 JSONObject value=new JSONObject();value.put("claimed",false);value.put("uid","");value.put("deviceId","");
-                database("PATCH","licenses/"+entry.hash,value,null);
+                database("PATCH",entry.collection+"/"+entry.hash,value,null);
             });
             else confirm("Permanently delete this customer's license?",()->{
-                database("DELETE","licenses/"+entry.hash,null,null);
+                database("DELETE",entry.collection+"/"+entry.hash,null,null);
                 if(vault!=null)vault.edit().remove(entry.hash).apply();
             });
         }).show();
